@@ -1,10 +1,10 @@
-import sys
 import os
+import sys
 
-# Adiciona o diretório atual do script (Gemini) ao caminho de busca do Python
-DIR_ATUAL = os.path.dirname(os.path.abspath(__file__))
-if DIR_ATUAL not in sys.path:
-    sys.path.insert(0, DIR_ATUAL)
+# Força a inclusão do diretório 'Gemini' no sys.path do Python
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
 
 import streamlit as st
 from data_loader import load_and_normalize_data
@@ -12,6 +12,7 @@ from filters import render_sidebar_filters
 from kpis import calculate_kpis, render_kpi_cards
 from charts import render_evolution_chart, render_horizontal_ranking, render_donut_chart
 from pdf_export import generate_pdf_report
+
 st.set_page_config(page_title="Painel de Refrigeração", layout="wide")
 
 st.title("❄️ Painel de Acompanhamento de Refrigeração")
@@ -47,7 +48,7 @@ if not selected_kpis:
 else:
     render_kpi_cards(selected_kpis, kpi_values)
 
-# 5. Submenu de Gráficos (Habilitado apenas se pelo menos um KPI for selecionado)
+# 5. Submenu de Gráficos (Habilitado se pelo menos um KPI for selecionado)
 if selected_kpis:
     st.markdown("---")
     st.subheader("2. Submenu de Gráficos")
@@ -72,7 +73,6 @@ if selected_kpis:
         st.markdown("---")
         st.subheader("3. Área de Visualização")
 
-        # Exibição Responsiva de Gráficos
         if "Evolução no período" in selected_charts:
             c1, c2 = st.columns([1, 1])
             with c1:
@@ -94,11 +94,15 @@ if selected_kpis:
                 fig_prob = render_horizontal_ranking(df_corr, "Problema", "Top Problemas Relatados", top_n=top_n_global)
                 st.plotly_chart(fig_prob, use_container_width=True)
 
+        if "Rosca - Universo de análise" in selected_charts:
+            fig_rosca = render_donut_chart(df_filtered, "Máquina", "Participação no Total de Tarefas", top_n=top_n_global)
+            st.plotly_chart(fig_rosca, use_container_width=True)
+
         # Exportação em PDF
         st.markdown("---")
         st.subheader("4. Exportação")
         if st.button("📄 Exportar Relatório em PDF"):
-            pdf_bytes = generate_pdf_report(kpi_values, selected_kpis, [])
+            pdf_bytes = generate_pdf_report(kpi_values, selected_kpis)
             st.download_button(
                 label="⬇️ Baixar PDF",
                 data=pdf_bytes,
@@ -106,7 +110,7 @@ if selected_kpis:
                 mime="application/pdf"
             )
 
-# 6. Tabela de Detalhamento (Minimizada por padrão)
+# 6. Tabela de Detalhamento
 st.markdown("---")
 with st.expander("📋 Tabela de Detalhamento de Registros (Minimizada)"):
     page_size = st.selectbox("Registros por página", [15, 25, 50, 100], index=0)
