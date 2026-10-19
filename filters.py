@@ -5,14 +5,14 @@ import datetime
 def render_sidebar_filters(df):
     st.sidebar.title("🔍 Filtros do Painel")
 
-    # Garante conversão correta da coluna de datas
-    datas_series = pd.to_datetime(df["Data da tarefa"], errors="coerce").dt.date
-    datas_validas = datas_series.dropna()
+    # Assegura conversão para Datetime nativo do Pandas
+    dates_converted = pd.to_datetime(df["Data da tarefa"], errors="coerce", dayfirst=True)
+    valid_dates = dates_converted.dropna()
 
     # Define limites padrão resilientes
-    if not datas_validas.empty:
-        min_date = datas_validas.min()
-        max_date = datas_validas.max()
+    if not valid_dates.empty:
+        min_date = valid_dates.min().date()
+        max_date = valid_dates.max().date()
     else:
         min_date = datetime.date(2026, 1, 1)
         max_date = datetime.date(2026, 12, 31)
@@ -45,13 +45,17 @@ def render_sidebar_filters(df):
 
     df_filtered = df.copy()
 
-    # Aplicar Filtro de Datas com comparação direta de objetos datetime.date
+    # Aplica o Filtro de Datas convertendo os limites para pd.Timestamp
     if is_date_valid:
         start, end = date_range
-        # Extrai os objetos date com segurança para a filtragem
-        df_dates = pd.to_datetime(df_filtered["Data da tarefa"], errors="coerce").dt.date
-        mask_date = (df_dates >= start) & (df_dates <= end)
-        df_filtered = df_filtered[mask_date]
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end).replace(hour=23, minute=59, second=59)
+
+        # Garante que a coluna no DataFrame filtrado seja datetime64
+        df_filtered["Data_dt"] = pd.to_datetime(df_filtered["Data da tarefa"], errors="coerce", dayfirst=True)
+        
+        mask_date = (df_filtered["Data_dt"] >= start_ts) & (df_filtered["Data_dt"] <= end_ts)
+        df_filtered = df_filtered[mask_date].drop(columns=["Data_dt"])
 
     # Filtros por categorias
     if tipo != "Todas":
