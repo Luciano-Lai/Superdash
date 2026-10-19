@@ -40,7 +40,7 @@ if not selected_kpis:
 else:
     render_kpi_cards(selected_kpis, kpi_values)
 
-# 5. Submenu de Gráficos (Habilitado se pelo menos um KPI for selecionado)
+# 5. Submenu de Gráficos
 if selected_kpis:
     st.markdown("---")
     st.subheader("2. Submenu de Gráficos")
