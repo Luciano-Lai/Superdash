@@ -1,24 +1,18 @@
 import io
 from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-def generate_pdf_report(kpi_dict, selected_kpis, chart_figs):
-    """
-    Gera o PDF contendo os KPIs e gráficos selecionados para exportação.
-    """
+def generate_pdf_report(kpi_dict, selected_kpis, chart_figs=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     story = []
 
-    # Título do Relatório
     story.append(Paragraph("<b>Relatório de Acompanhamento de Refrigeração</b>", styles["Title"]))
     story.append(Spacer(1, 12))
 
-    # Tabela de KPIs
     if selected_kpis:
         story.append(Paragraph("<b>Indicadores Chave (KPIs)</b>", styles["Heading2"]))
         kpi_data = [["KPI", "Valor"]]
