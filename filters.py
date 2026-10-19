@@ -1,13 +1,21 @@
 import streamlit as st
 import pandas as pd
+import datetime
 
 def render_sidebar_filters(df):
     st.sidebar.title("🔍 Filtros do Painel")
 
-    # Garante datas válidas
-    datas_validas = df["Data da tarefa"].dropna()
-    min_date = datas_validas.min().date() if not datas_validas.empty else pd.to_datetime("2026-01-01").date()
-    max_date = datas_validas.max().date() if not datas_validas.empty else pd.to_datetime("2026-12-31").date()
+    # Garante conversão correta da coluna de datas
+    datas_series = pd.to_datetime(df["Data da tarefa"], errors="coerce").dt.date
+    datas_validas = datas_series.dropna()
+
+    # Define limites padrão resilientes
+    if not datas_validas.empty:
+        min_date = datas_validas.min()
+        max_date = datas_validas.max()
+    else:
+        min_date = datetime.date(2026, 1, 1)
+        max_date = datetime.date(2026, 12, 31)
 
     date_range = st.sidebar.date_input(
         "Período (Obrigatório)*",
@@ -16,6 +24,7 @@ def render_sidebar_filters(df):
         max_value=max_date
     )
 
+    # Filtros Auxiliares
     tipo = st.sidebar.selectbox("Tipo de Tarefa", ["Todas", "Preventiva", "Corretiva"])
     maquina = st.sidebar.multiselect("Máquina", options=sorted(df["Máquina"].dropna().astype(str).unique()))
     tecnico = st.sidebar.multiselect("Técnico", options=sorted(df["Técnico"].dropna().astype(str).unique()))
@@ -35,13 +44,16 @@ def render_sidebar_filters(df):
     ])
 
     df_filtered = df.copy()
+
+    # Aplicar Filtro de Datas com comparação direta de objetos datetime.date
     if is_date_valid:
         start, end = date_range
-        df_filtered = df_filtered[
-            (df_filtered["Data da tarefa"].dt.date >= start) & 
-            (df_filtered["Data da tarefa"].dt.date <= end)
-        ]
+        # Extrai os objetos date com segurança para a filtragem
+        df_dates = pd.to_datetime(df_filtered["Data da tarefa"], errors="coerce").dt.date
+        mask_date = (df_dates >= start) & (df_dates <= end)
+        df_filtered = df_filtered[mask_date]
 
+    # Filtros por categorias
     if tipo != "Todas":
         df_filtered = df_filtered[df_filtered["Tipo"] == tipo]
     if maquina:
