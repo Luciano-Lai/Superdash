@@ -5,11 +5,11 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
-from src.data_loader import load_and_normalize_data
-from src.filters import render_sidebar_filters
-from src.kpis import calculate_kpis, render_kpi_cards
-from src.charts import render_evolution_chart, render_horizontal_ranking, render_donut_chart
-from src.pdf_export import generate_pdf_report
+from data_loader import load_and_normalize_data
+from filters import render_sidebar_filters
+from kpis import calculate_kpis, render_kpi_cards
+from charts import render_evolution_chart, render_horizontal_ranking, render_donut_chart
+from pdf_export import generate_pdf_report
 
 st.set_page_config(page_title="Painel de Refrigeração", layout="wide")
 
