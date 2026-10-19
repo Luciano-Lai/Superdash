@@ -3,9 +3,6 @@ import plotly.graph_objects as go
 import pandas as pd
 
 def render_evolution_chart(df, granularity="Diária", chart_type="Barras"):
-    """
-    Gera o gráfico de evolução temporal no período.
-    """
     df_evo = df.copy()
     if granularity == "Semanal":
         df_evo["Período"] = df_evo["Data da tarefa"].dt.to_period("W").dt.start_time
@@ -23,7 +20,7 @@ def render_evolution_chart(df, granularity="Diária", chart_type="Barras"):
         tot_per = df_evo.groupby("Período").size().reset_index(name="Total")
         tot_per["Acumulado"] = tot_per["Total"].cumsum()
 
-        fig.add_trace(go.Bar(x=tot_per["Período"], y=tot_per["Total"], name="Total Diário/Período"))
+        fig.add_trace(go.Bar(x=tot_per["Período"], y=tot_per["Total"], name="Total no Período"))
         fig.add_trace(go.Scatter(x=tot_per["Período"], y=tot_per["Acumulado"], name="Acumulado", yaxis="y2"))
         fig.update_layout(
             title="Evolução com Acumulado",
@@ -36,9 +33,6 @@ def render_evolution_chart(df, granularity="Diária", chart_type="Barras"):
     return fig
 
 def render_horizontal_ranking(df, column, title, top_n=10):
-    """
-    Gera gráficos de ranking em barras horizontais ordenados decrescentemente.
-    """
     counts = df[column].value_counts().head(top_n).reset_index()
     counts.columns = [column, "Total"]
     fig = px.bar(counts, x="Total", y=column, orientation="h", title=title, text="Total")
@@ -46,9 +40,6 @@ def render_horizontal_ranking(df, column, title, top_n=10):
     return fig
 
 def render_donut_chart(df, column, title, top_n=10, show_others=True):
-    """
-    Gera gráfico de Rosca com valor total no centro e fatia 'Outras'.
-    """
     counts = df[column].value_counts()
     if len(counts) > top_n and show_others:
         top = counts.head(top_n)
