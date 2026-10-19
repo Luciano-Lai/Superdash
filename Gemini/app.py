@@ -1,8 +1,10 @@
 import sys
 import os
 
-# Adiciona o diretório atual do app.py ao PYTHONPATH
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Adiciona o diretório atual do script (Gemini) ao caminho de busca do Python
+DIR_ATUAL = os.path.dirname(os.path.abspath(__file__))
+if DIR_ATUAL not in sys.path:
+    sys.path.insert(0, DIR_ATUAL)
 
 import streamlit as st
 from data_loader import load_and_normalize_data
@@ -10,7 +12,6 @@ from filters import render_sidebar_filters
 from kpis import calculate_kpis, render_kpi_cards
 from charts import render_evolution_chart, render_horizontal_ranking, render_donut_chart
 from pdf_export import generate_pdf_report
-
 st.set_page_config(page_title="Painel de Refrigeração", layout="wide")
 
 st.title("❄️ Painel de Acompanhamento de Refrigeração")
