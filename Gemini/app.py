@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Adiciona o diretório atual do app.py ao PYTHONPATH
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import streamlit as st
 from src.data_loader import load_and_normalize_data
 from src.filters import render_sidebar_filters
