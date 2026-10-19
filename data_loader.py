@@ -8,10 +8,9 @@ BASE_PUB_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIq
 @st.cache_data(ttl=60)
 def load_and_normalize_data():
     """
-    Lê a aba 'Dados' e 'Master' do Google Sheets publicado e faz o merge.
+    Lê a aba 'Dados' e 'Master' do Google Sheets publicado, desduplica colunas e trata a fusão.
     """
     try:
-        # Tenta ler as abas em formato CSV
         url_dados = f"{BASE_PUB_URL}?gid=0&single=true&output=csv"
         df_dados = pd.read_csv(url_dados, skiprows=2)
     except Exception:
@@ -23,7 +22,7 @@ def load_and_normalize_data():
     except Exception:
         df_master = pd.DataFrame()
 
-    # Estrutura Resiliente de Fallback caso as tabelas venham vazias na conexão
+    # Estrutura Resiliente de Fallback caso as tabelas venham vazias
     if df_master.empty:
         df_master = pd.DataFrame([
             {
@@ -54,12 +53,16 @@ def load_and_normalize_data():
 
     if df_dados.empty:
         df_dados = pd.DataFrame([
-            {"Código Ar Verificado": "TMW6P", "Equipamento": "Chiller 50TR", "Tipo": "Industrial"},
-            {"Código Ar Verificado": "4E5VN", "Equipamento": "Split Wall 18k", "Tipo": "Comercial"}
+            {"Código Ar Verificado": "TMW6P", "Equipamento": "Chiller 50TR", "Tipo_Equipamento": "Industrial"},
+            {"Código Ar Verificado": "4E5VN", "Equipamento": "Split Wall 18k", "Tipo_Equipamento": "Comercial"}
         ])
 
-    # Unifica informações
+    # Unifica informações e reseta o índice para evitar índices duplicados
     df = pd.merge(df_master, df_dados, on="Código Ar Verificado", how="left")
+
+    # SOLUÇÃO DO ERRO: Remove colunas com nomes duplicados mantendo apenas a primeira ocorrência
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    df.reset_index(drop=True, inplace=True)
 
     # Mapeamento para o padrão do Painel
     col_map = {
