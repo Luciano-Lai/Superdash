@@ -1,16 +1,15 @@
 import os
 import sys
 
-# Pega o caminho absoluto da pasta onde este arquivo app.py está localizado (Gemini/)
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# 1. Configura o caminho de busca ANTES de importar qualquer outro módulo
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
 
-# Força o Python a colocar essa pasta como PRIORIDADE MÁXIMA de busca de módulos
-if SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, SCRIPT_DIR)
+# 2. Muda o diretório de trabalho do processo para a pasta Gemini
+os.chdir(CURRENT_DIR)
 
-# Mude o diretório de trabalho atual do processo para a pasta Gemini
-os.chdir(SCRIPT_DIR)
-
+# 3. Agora sim, importa os módulos do projeto e o Streamlit
 import streamlit as st
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
