@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from data_loader import load_and_normalize_data
+from filters import render_sidebar_filters
 
-# 1. Configuração da página e tema executivo
+# 1. Configuração da página
 st.set_page_config(
     page_title="Painel Executivo de Manutenção",
     page_icon="📊",
@@ -12,211 +12,157 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Injeção de CSS customizado para acabamento profissional
+# 2. Estilização CSS voltada APENAS para os Cards do Topo (Primeira Parte)
 st.markdown("""
     <style>
-        /* Estilo do fundo principal */
-        .main {
-            background-color: #f8fafc;
-        }
-        
-        /* Ocultar marca e menu padrão do Streamlit */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        
-        /* Formatação dos Cards de KPI Executivos */
-        .kpi-card {
-            background-color: #ffffff;
-            border-radius: 12px;
-            padding: 20px 24px;
+        /* Estilo dos Cards Executivos do Topo */
+        .exec-card {
+            background-color: #FFFFFF;
+            border-radius: 10px;
+            padding: 18px 20px;
             border-left: 5px solid #0284c7;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-            margin-bottom: 12px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+            margin-bottom: 15px;
         }
-        .kpi-card-success { border-left-color: #16a34a; }
-        .kpi-card-warning { border-left-color: #f59e0b; }
-        .kpi-card-danger { border-left-color: #dc2626; }
+        .exec-card-green { border-left-color: #16a34a; }
+        .exec-card-amber { border-left-color: #d97706; }
+        .exec-card-red   { border-left-color: #dc2626; }
         
-        .kpi-title {
-            font-size: 13px;
-            font-weight: 600;
+        .exec-title {
+            font-size: 12px;
+            font-weight: 700;
             color: #64748b;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
         }
-        .kpi-value {
-            font-size: 32px;
+        .exec-value {
+            font-size: 28px;
             font-weight: 800;
             color: #0f172a;
             line-height: 1.1;
         }
-        .kpi-sub {
+        .exec-sub {
             font-size: 12px;
             color: #94a3b8;
-            margin-top: 6px;
+            margin-top: 4px;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Carregamento dos dados via data_loader
+# 3. Carregamento dos dados
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
     st.warning("Nenhum dado encontrado para exibição.")
     st.stop()
 
-# 4. Filtros na Barra Lateral (Sidebar)
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3063/3063822.png", width=60)
-st.sidebar.title("Filtros Estratégicos")
+# 4. Renderização dos Filtros na Barra Lateral
+df_filtered, is_date_valid, has_additional_filter = render_sidebar_filters(df_raw)
 
-# Filtro por Cliente
-clientes_opt = ["Todos"] + sorted([str(x) for x in df_raw["Cliente"].unique() if x != "Não especificado"])
-cliente_sel = st.sidebar.selectbox("Cliente", clientes_opt)
+# --- PRIMEIRA PARTE: CABEÇALHO E CARDS EXECUTIVOS DO TOPO ---
 
-# Filtro por Tipo de Manutenção
-tipos_opt = ["Todos"] + sorted([str(x) for x in df_raw["Tipo"].unique() if x != "Não especificado"])
-tipo_sel = st.sidebar.selectbox("Tipo de Manutenção", tipos_opt)
-
-# Filtro por Técnico
-tecnicos_opt = ["Todos"] + sorted([str(x) for x in df_raw["Técnico"].unique() if x != "Não especificado"])
-tecnico_sel = st.sidebar.selectbox("Técnico Responsável", tecnicos_opt)
-
-# Aplicação dos Filtros
-df = df_raw.copy()
-if cliente_sel != "Todos":
-    df = df[df["Cliente"] == cliente_sel]
-if tipo_sel != "Todos":
-    df = df[df["Tipo"] == tipo_sel]
-if tecnico_sel != "Todos":
-    df = df[df["Técnico"] == tecnico_sel]
-
-# 5. Cabeçalho Executivo
 st.title("📊 Painel Executivo de Manutenção & Ativos")
-st.caption("Visão estratégica em tempo real dos chamados, garantias e parque de equipamentos.")
+st.caption("Visão consolidada e estratégica dos indicadores de atendimento")
+
+# Cálculo dos Indicadores do Topo
+total_chamados = len(df_filtered)
+
+if "Tipo" in df_filtered.columns:
+    preventivas = len(df_filtered[df_filtered["Tipo"].astype(str).str.contains("Preventiva", case=False, na=False)])
+    corretivas = len(df_filtered[df_filtered["Tipo"].astype(str).str.contains("Corretiva", case=False, na=False)])
+else:
+    preventivas = 0
+    corretivas = 0
+
+garantia_cnt = len(df_filtered[df_filtered["Garantia"] == "Dentro"]) if "Garantia" in df_filtered.columns else 0
+pct_garantia = (garantia_cnt / total_chamados * 100) if total_chamados > 0 else 0
+
+# Renderização dos Cards Executivos em 4 Colunas
+c1, c2, c3, c4 = st.columns(4)
+
+with c1:
+    st.markdown(f"""
+        <div class="exec-card">
+            <div class="exec-title">Total de Atendimentos</div>
+            <div class="exec-value">{total_chamados}</div>
+            <div class="exec-sub">Registros no período</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+with c2:
+    st.markdown(f"""
+        <div class="exec-card exec-card-green">
+            <div class="exec-title">Preventivas</div>
+            <div class="exec-value">{preventivas}</div>
+            <div class="exec-sub">Manutenções programadas</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+with c3:
+    st.markdown(f"""
+        <div class="exec-card exec-card-amber">
+            <div class="exec-title">Corretivas</div>
+            <div class="exec-value">{corretivas}</div>
+            <div class="exec-sub">Atendimentos de reparo</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+with c4:
+    st.markdown(f"""
+        <div class="exec-card exec-card-red">
+            <div class="exec-title">Em Garantia</div>
+            <div class="exec-value">{pct_garantia:.1f}%</div>
+            <div class="exec-sub">{garantia_cnt} equipamento(s) cobertos</div>
+        </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# 6. Mapeamento dos Cards de KPI Superiores
-total_chamados = len(df)
-preventivas = len(df[df["Tipo"].str.contains("Preventiva", case=False, na=False)])
-corretivas = len(df[df["Tipo"].str.contains("Corretiva", case=False, na=False)])
-dentro_garantia = len(df[df["Garantia"] == "Dentro"]) if "Garantia" in df.columns else 0
+# --- SEGUNDA PARTE: RESTANTE DO APLICATIVO (GRÁFICOS E TABELA) ---
 
-pct_garantia = (dentro_garantia / total_chamados * 100) if total_chamados > 0 else 0
+col_g1, col_g2 = st.columns(2)
 
-col1, col2, col3, col4 = st.columns(4)
+with col_g1:
+    st.subheader("Manutenções por Tipo")
+    if "Tipo" in df_filtered.columns and not df_filtered.empty:
+        df_tipo = df_filtered["Tipo"].value_counts().reset_index()
+        df_tipo.columns = ["Tipo", "Quantidade"]
+        fig_tipo = px.pie(
+            df_tipo, 
+            names="Tipo", 
+            values="Quantidade", 
+            hole=0.4,
+            color_discrete_sequence=["#0284c7", "#f59e0b", "#16a34a", "#dc2626"]
+        )
+        st.plotly_chart(fig_tipo, use_container_width=True)
 
-with col1:
-    st.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-title">Total de Chamados</div>
-            <div class="kpi-value">{total_chamados}</div>
-            <div class="kpi-sub">Registros no período</div>
-        </div>
-    """, unsafe_allow_html=True)
+with col_g2:
+    st.subheader("Top 5 Problemas Relatados")
+    if "Problema" in df_filtered.columns and not df_filtered.empty:
+        df_prob = df_filtered["Problema"].value_counts().head(5).reset_index()
+        df_prob.columns = ["Problema", "Quantidade"]
+        fig_prob = px.bar(
+            df_prob, 
+            x="Quantidade", 
+            y="Problema", 
+            orientation="h",
+            color_discrete_sequence=["#0284c7"]
+        )
+        fig_prob.update_layout(yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_prob, use_container_width=True)
 
-with col2:
-    st.markdown(f"""
-        <div class="kpi-card kpi-card-success">
-            <div class="kpi-title">Preventivas</div>
-            <div class="kpi-value">{preventivas}</div>
-            <div class="kpi-sub">Manutenções planejadas</div>
-        </div>
-    """, unsafe_allow_html=True)
+st.subheader("Atendimentos por Técnico")
+if "Técnico" in df_filtered.columns and not df_filtered.empty:
+    df_tech = df_filtered["Técnico"].value_counts().reset_index()
+    df_tech.columns = ["Técnico", "Atendimentos"]
+    fig_tech = px.bar(
+        df_tech, 
+        x="Técnico", 
+        y="Atendimentos",
+        color_discrete_sequence=["#0f172a"]
+    )
+    st.plotly_chart(fig_tech, use_container_width=True)
 
-with col3:
-    st.markdown(f"""
-        <div class="kpi-card kpi-card-warning">
-            <div class="kpi-title">Corretivas</div>
-            <div class="kpi-value">{corretivas}</div>
-            <div class="kpi-sub">Reparos de emergência</div>
-        </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    st.markdown(f"""
-        <div class="kpi-card kpi-card-danger">
-            <div class="kpi-title">Em Garantia</div>
-            <div class="kpi-value">{pct_garantia:.1f}%</div>
-            <div class="kpi-sub">{dentro_garantia} equipamento(s) cobertos</div>
-        </div>
-    """, unsafe_allow_html=True)
-
-st.write("")
-
-# 7. Organização em Abas Estratégicas
-tab_dashboard, tab_tecnica, tab_tabela = st.tabs(["📈 Visão Executiva", "🛠️ Análise Técnica", "📋 Relatório Operacional"])
-
-with tab_dashboard:
-    col_chart1, col_chart2 = st.columns(2)
-    
-    with col_chart1:
-        st.subheader("Distribuição por Tipo de Manutenção")
-        if "Tipo" in df.columns and not df.empty:
-            df_tipo = df["Tipo"].value_counts().reset_index()
-            df_tipo.columns = ["Tipo", "Qtd"]
-            fig_tipo = px.pie(
-                df_tipo, 
-                names="Tipo", 
-                values="Qtd", 
-                hole=0.5,
-                color_discrete_sequence=["#0284c7", "#f59e0b", "#16a34a", "#dc2626"]
-            )
-            fig_tipo.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=320)
-            st.plotly_chart(fig_tipo, use_container_width=True)
-
-    with col_chart2:
-        st.subheader("Top 5 Falhas / Problemas Relatados")
-        if "Problema" in df.columns and not df.empty:
-            df_prob = df["Problema"].value_counts().head(5).reset_index()
-            df_prob.columns = ["Problema", "Qtd"]
-            fig_prob = px.bar(
-                df_prob, 
-                x="Qtd", 
-                y="Problema", 
-                orientation="h",
-                color_discrete_sequence=["#0284c7"]
-            )
-            fig_prob.update_layout(
-                yaxis=dict(autorange="reversed"),
-                margin=dict(t=20, b=20, l=20, r=20),
-                height=320
-            )
-            st.plotly_chart(fig_prob, use_container_width=True)
-
-with tab_tecnica:
-    col_tech1, col_tech2 = st.columns(2)
-    
-    with col_tech1:
-        st.subheader("Atendimentos por Técnico")
-        if "Técnico" in df.columns and not df.empty:
-            df_tech = df["Técnico"].value_counts().reset_index()
-            df_tech.columns = ["Técnico", "Atendimentos"]
-            fig_tech = px.bar(
-                df_tech, 
-                x="Técnico", 
-                y="Atendimentos",
-                color_discrete_sequence=["#0f172a"]
-            )
-            fig_tech.update_layout(height=320, margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(fig_tech, use_container_width=True)
-
-    with col_tech2:
-        st.subheader("Status de Garantia dos Ativos")
-        if "Garantia" in df.columns and not df.empty:
-            df_gar = df["Garantia"].value_counts().reset_index()
-            df_gar.columns = ["Status", "Qtd"]
-            fig_gar = px.bar(
-                df_gar, 
-                x="Status", 
-                y="Qtd",
-                color="Status",
-                color_discrete_map={"Dentro": "#16a34a", "Fora": "#dc2626", "Não informado": "#94a3b8"}
-            )
-            fig_gar.update_layout(height=320, margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(fig_gar, use_container_width=True)
-
-with tab_tabela:
-    st.subheader("Tabela de Registros Filtrados")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+st.subheader("Detalhamento dos Registros")
+st.dataframe(df_filtered, use_container_width=True, hide_index=True)
