@@ -1,21 +1,11 @@
-import os
-import sys
-
-# 1. Configura o caminho de busca ANTES de importar qualquer outro módulo
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-if CURRENT_DIR not in sys.path:
-    sys.path.insert(0, CURRENT_DIR)
-
-# 2. Muda o diretório de trabalho do processo para a pasta Gemini
-os.chdir(CURRENT_DIR)
-
-# 3. Agora sim, importa os módulos do projeto e o Streamlit
 import streamlit as st
-from data_loader import load_and_normalize_data
-from filters import render_sidebar_filters
-from kpis import calculate_kpis, render_kpi_cards
-from charts import render_evolution_chart, render_horizontal_ranking, render_donut_chart
-from pdf_export import generate_pdf_report
+
+# Usamos importação explícita a partir da pasta 'Gemini'
+from Gemini.data_loader import load_and_normalize_data
+from Gemini.filters import render_sidebar_filters
+from Gemini.kpis import calculate_kpis, render_kpi_cards
+from Gemini.charts import render_evolution_chart, render_horizontal_ranking, render_donut_chart
+from Gemini.pdf_export import generate_pdf_report
 
 st.set_page_config(page_title="Painel de Refrigeração", layout="wide")
 
