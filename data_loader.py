@@ -1,90 +1,112 @@
 import pandas as pd
 import streamlit as st
 
-# Links CSV diretos das abas do Google Sheets
 URL_ABA_MASTER = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=1187149031&single=true&output=csv"
 URL_ABA_DADOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=152468513&single=true&output=csv"
 
-def parse_sheet_with_header(url):
+def read_raw_csv_resilient(url):
     """
-    Lê o CSV tratando encoding incorreto e detectando dinamicamente
-    a linha do cabeçalho principal.
+    Tenta ler o CSV testando diferentes encodings (utf-8-sig, latin1, cp1252)
     """
-    try:
-        df_raw = pd.read_csv(url, header=None, encoding="utf-8-sig", on_bad_lines="skip")
-        if df_raw.empty:
-            return pd.DataFrame()
+    for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252"]:
+        try:
+            df = pd.read_csv(url, header=None, encoding=enc, on_bad_lines="skip")
+            if not df.empty and df.shape[1] > 1:
+                return df
+        except Exception:
+            continue
+    return pd.DataFrame()
 
-        header_idx = None
-        for idx, row in df_raw.iterrows():
-            row_str = " ".join([str(cell) for cell in row.values if pd.notnull(cell)])
-            # Procura por palavras-chave na linha real da tabela
-            if ("digo" in row_str or "Codigo" in row_str or "Técnico" in row_str or "Tecnico" in row_str or "TMW6P" in row_str or "4E5VN" in row_str):
-                # Se for a linha dos dados (ex: TMW6P), o cabeçalho é a linha imediatamente anterior
-                if "TMW6P" in row_str or "4E5VN" in row_str:
-                    header_idx = max(0, idx - 1)
-                else:
-                    header_idx = idx
-                break
-
-        if header_idx is not None:
-            df = pd.read_csv(url, skiprows=header_idx, encoding="utf-8-sig")
-        else:
-            df = pd.read_csv(url, encoding="utf-8-sig")
-
-        # Mapeamento e normalização robusta das colunas
-        new_cols = []
-        for col in df.columns:
-            c = str(col).strip()
-            if any(k in c for k in ["CÃ³digo", "digo Ar", "Codigo Ar"]):
-                new_cols.append("Código Ar Verificado")
-            elif any(k in c for k in ["TÃ©cnico", "Tecnico"]):
-                new_cols.append("Técnico")
-            elif any(k in c for k in ["ManutenÃ§Ã£o", "Manutencao"]):
-                new_cols.append("Manutenção")
-            elif "Data" in c and "Garantia" not in c:
-                new_cols.append("Data da tarefa")
-            elif "Garantia" in c:
-                new_cols.append("Data Garantia")
-            elif any(k in c for k in ["Problema", "Problemas"]):
-                new_cols.append("Problema")
-            elif any(k in c for k in ["PeÃ§a", "Peca", "Peças"]):
-                new_cols.append("Peça")
-            else:
-                new_cols.append(c)
-        
-        df.columns = new_cols
-        return df
-
-    except Exception as e:
-        st.error(f"Erro ao ler URL do Google Sheets: {e}")
+def find_header_and_data(df_raw):
+    """
+    Localiza a linha onde começam os dados reais (código de máquina, técnico, data, etc.)
+    """
+    if df_raw.empty:
         return pd.DataFrame()
+
+    header_idx = None
+    
+    # Varre as linhas procurando os nomes dos cabeçalhos ou dados conhecidos
+    for idx, row in df_raw.iterrows():
+        row_str = " ".join([str(v) for v in row.values if pd.notnull(v)])
+        
+        # Verifica se a linha contém indícios de cabeçalho/dados
+        if any(term in row_str for term in ["Código Ar", "Codigo", "CÃ³digo", "TMW6P", "4E5VN", "Técnico", "Tecnico", "Manutenção", "Manutencao"]):
+            if any(term in row_str for term in ["TMW6P", "4E5VN"]) and idx > 0:
+                header_idx = idx - 1
+            else:
+                header_idx = idx
+            break
+
+    if header_idx is not None:
+        # Usa a linha encontrada como cabeçalho
+        new_header = df_raw.iloc[header_idx].astype(str).str.strip().values
+        df = df_raw.iloc[header_idx + 1:].copy()
+        df.columns = new_header
+    else:
+        # Se não achou marcador, usa a primeira linha
+        new_header = df_raw.iloc[0].astype(str).str.strip().values
+        df = df_raw.iloc[1:].copy()
+        df.columns = new_header
+
+    return df
 
 @st.cache_data(ttl=60)
 def load_and_normalize_data():
-    df_master = parse_sheet_with_header(URL_ABA_MASTER)
-    df_dados = parse_sheet_with_header(URL_ABA_DADOS)
+    df_raw_master = read_raw_csv_resilient(URL_ABA_MASTER)
+    df_raw_dados = read_raw_csv_resilient(URL_ABA_DADOS)
 
-    if df_master.empty:
-        # Retorna DataFrame com estrutura mínima para evitar KeyError
-        return pd.DataFrame(columns=["Data da tarefa", "Tipo", "Máquina", "Técnico", "Cliente", "Cidade", "Região", "Estado"])
+    # EXIBE DIAGNÓSTICO NA TELA DO STREAMLIT SE HOUVER PROBLEMA
+    if df_raw_master.empty:
+        st.error("⚠️ Não foi possível baixar os dados da URL Master. Verifique se a planilha está publicada na web.")
+        return pd.DataFrame()
 
-    # Realiza a fusão entre as duas abas se a chave existir
+    with st.expander("🛠️ Diagnóstico do Leitor de CSV (Clique para expandir)"):
+        st.write("Linhas brutas da Aba Master (Primeiras 10 linhas):")
+        st.dataframe(df_raw_master.head(10))
+
+    df_master = find_header_and_data(df_raw_master)
+    df_dados = find_header_and_data(df_raw_dados)
+
+    # Padroniza nomes de colunas
+    def clean_column_names(df):
+        cols = []
+        for c in df.columns:
+            col_s = str(c)
+            if any(k in col_s for k in ["digo Ar", "Codigo Ar", "CÃ³digo"]):
+                cols.append("Código Ar Verificado")
+            elif any(k in col_s for k in ["TÃ©cnico", "Tecnico", "Técnico"]):
+                cols.append("Técnico")
+            elif any(k in col_s for k in ["ManutenÃ§Ã£o", "Manutencao", "Manutenção"]):
+                cols.append("Manutenção")
+            elif "Data" in col_s and "Garantia" not in col_s:
+                cols.append("Data da tarefa")
+            elif "Garantia" in col_s:
+                cols.append("Data Garantia")
+            elif any(k in col_s for k in ["Problema", "Problemas"]):
+                cols.append("Problema")
+            elif any(k in col_s for k in ["PeÃ§a", "Peca", "Peças"]):
+                cols.append("Peça")
+            else:
+                cols.append(col_s.strip())
+        df.columns = cols
+        return df
+
+    df_master = clean_column_names(df_master)
+    if not df_dados.empty:
+        df_dados = clean_column_names(df_dados)
+
+    # Merge das tabelas
     if not df_dados.empty and "Código Ar Verificado" in df_dados.columns and "Código Ar Verificado" in df_master.columns:
         df = pd.merge(df_master, df_dados, on="Código Ar Verificado", how="left")
     else:
         df = df_master.copy()
 
-    # Remove linhas de lixo ou rodapés
-    if "Código Ar Verificado" in df.columns:
-        df = df[df["Código Ar Verificado"].notnull()]
-        df = df[~df["Código Ar Verificado"].astype(str).str.contains(",", na=False)]
-
-    # Remove colunas duplicadas
+    # Limpeza de colunas duplicadas
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df.reset_index(drop=True, inplace=True)
 
-    # Renomeação final de segurança
+    # Garante renomeação e existência de colunas essenciais
     col_map = {
         "Data": "Data da tarefa",
         "Manutenção": "Tipo",
@@ -92,23 +114,16 @@ def load_and_normalize_data():
     }
     df.rename(columns=col_map, inplace=True)
 
-    # GARANTIA DE SEGURANÇA: Se a coluna "Data da tarefa" não existir, cria como NaT
     if "Data da tarefa" not in df.columns:
         df["Data da tarefa"] = pd.NaT
     else:
         df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], errors="coerce", dayfirst=True)
 
-    # Garantia de colunas de garantia
-    if "Data Garantia" in df.columns:
-        df["Data Garantia"] = pd.to_datetime(df["Data Garantia"], errors="coerce", dayfirst=True)
-        df["Garantia"] = df.apply(
-            lambda r: "Dentro" if pd.notnull(r["Data Garantia"]) and pd.notnull(r["Data da tarefa"]) and r["Data Garantia"] >= r["Data da tarefa"] else "Fora",
-            axis=1
-        )
-    else:
-        df["Garantia"] = "Não informado"
+    # Limpa linhas inválidas ou completamente vazias
+    if "Máquina" in df.columns:
+        df = df[df["Máquina"].notnull()]
+        df = df[~df["Máquina"].astype(str).str.contains("^,", na=False)]
 
-    # Preenchimento de campos categóricos para os filtros
     for col in ["Cidade", "Estado", "Cliente", "Região", "Técnico", "Máquina", "Tipo"]:
         if col not in df.columns:
             df[col] = "Não especificado"
