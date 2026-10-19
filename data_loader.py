@@ -4,109 +4,95 @@ import streamlit as st
 URL_ABA_MASTER = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=1187149031&single=true&output=csv"
 URL_ABA_DADOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=152468513&single=true&output=csv"
 
-def read_raw_csv_resilient(url):
+def parse_sheet_by_fixed_header(url):
     """
-    Tenta ler o CSV testando diferentes encodings (utf-8-sig, latin1, cp1252)
+    Lê o CSV localizando exatamente a linha que contém as colunas
+    'Código Ar Verificado' e 'Técnico' (linha 8 no Google Sheets).
     """
-    for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252"]:
+    for enc in ["utf-8-sig", "latin1", "cp1252"]:
         try:
-            df = pd.read_csv(url, header=None, encoding=enc, on_bad_lines="skip")
-            if not df.empty and df.shape[1] > 1:
+            df_raw = pd.read_csv(url, header=None, encoding=enc, on_bad_lines="skip")
+            if df_raw.empty:
+                continue
+
+            # Localiza a linha exata onde estão os cabeçalhos da tabela principal
+            header_idx = None
+            for idx, row in df_raw.iterrows():
+                row_values = [str(val).strip() for val in row.values if pd.notnull(val)]
+                # Procura pela linha que contém 'Código Ar' ou 'Técnico' junto com 'Manutenção'
+                if any("Código Ar" in v or "Codigo Ar" in v or "CÃ³digo" in v for v in row_values) and \
+                   any("Técnico" in v or "Tecnico" in v or "Manutenção" in v or "Manutencao" in v for v in row_values):
+                    header_idx = idx
+                    break
+
+            if header_idx is not None:
+                # Extrai os nomes das colunas e os dados a partir das linhas seguintes
+                cols = df_raw.iloc[header_idx].astype(str).str.strip().values
+                df = df_raw.iloc[header_idx + 1:].copy()
+                df.columns = cols
+                return df
+            else:
+                # Se não encontrar por palavra-chave, pula as 8 primeiras linhas de cabeçalho superior
+                df = pd.read_csv(url, skiprows=8, encoding=enc)
                 return df
         except Exception:
             continue
+
     return pd.DataFrame()
-
-def find_header_and_data(df_raw):
-    """
-    Localiza a linha onde começam os dados reais (código de máquina, técnico, data, etc.)
-    """
-    if df_raw.empty:
-        return pd.DataFrame()
-
-    header_idx = None
-    
-    # Varre as linhas procurando os nomes dos cabeçalhos ou dados conhecidos
-    for idx, row in df_raw.iterrows():
-        row_str = " ".join([str(v) for v in row.values if pd.notnull(v)])
-        
-        # Verifica se a linha contém indícios de cabeçalho/dados
-        if any(term in row_str for term in ["Código Ar", "Codigo", "CÃ³digo", "TMW6P", "4E5VN", "Técnico", "Tecnico", "Manutenção", "Manutencao"]):
-            if any(term in row_str for term in ["TMW6P", "4E5VN"]) and idx > 0:
-                header_idx = idx - 1
-            else:
-                header_idx = idx
-            break
-
-    if header_idx is not None:
-        # Usa a linha encontrada como cabeçalho
-        new_header = df_raw.iloc[header_idx].astype(str).str.strip().values
-        df = df_raw.iloc[header_idx + 1:].copy()
-        df.columns = new_header
-    else:
-        # Se não achou marcador, usa a primeira linha
-        new_header = df_raw.iloc[0].astype(str).str.strip().values
-        df = df_raw.iloc[1:].copy()
-        df.columns = new_header
-
-    return df
 
 @st.cache_data(ttl=60)
 def load_and_normalize_data():
-    df_raw_master = read_raw_csv_resilient(URL_ABA_MASTER)
-    df_raw_dados = read_raw_csv_resilient(URL_ABA_DADOS)
+    df_master = parse_sheet_by_fixed_header(URL_ABA_MASTER)
+    df_dados = parse_sheet_by_fixed_header(URL_ABA_DADOS)
 
-    # EXIBE DIAGNÓSTICO NA TELA DO STREAMLIT SE HOUVER PROBLEMA
-    if df_raw_master.empty:
-        st.error("⚠️ Não foi possível baixar os dados da URL Master. Verifique se a planilha está publicada na web.")
+    if df_master.empty:
+        st.error("⚠️ Não foi possível carregar os dados da aba Master.")
         return pd.DataFrame()
 
-    with st.expander("🛠️ Diagnóstico do Leitor de CSV (Clique para expandir)"):
-        st.write("Linhas brutas da Aba Master (Primeiras 10 linhas):")
-        st.dataframe(df_raw_master.head(10))
+    # Limpa colunas sem nome ou vazias
+    df_master = df_master.loc[:, ~df_master.columns.str.contains('^Unnamed|^None', na=False)]
+    if not df_dados.empty:
+        df_dados = df_dados.loc[:, ~df_dados.columns.str.contains('^Unnamed|^None', na=False)]
 
-    df_master = find_header_and_data(df_raw_master)
-    df_dados = find_header_and_data(df_raw_dados)
-
-    # Padroniza nomes de colunas
-    def clean_column_names(df):
+    # Normalização dos nomes das colunas
+    def normalize_cols(df):
         cols = []
         for c in df.columns:
-            col_s = str(c)
-            if any(k in col_s for k in ["digo Ar", "Codigo Ar", "CÃ³digo"]):
+            c_str = str(c).strip()
+            if any(k in c_str for k in ["digo Ar", "Codigo Ar", "CÃ³digo"]):
                 cols.append("Código Ar Verificado")
-            elif any(k in col_s for k in ["TÃ©cnico", "Tecnico", "Técnico"]):
+            elif any(k in c_str for k in ["TÃ©cnico", "Tecnico", "Técnico"]):
                 cols.append("Técnico")
-            elif any(k in col_s for k in ["ManutenÃ§Ã£o", "Manutencao", "Manutenção"]):
+            elif any(k in c_str for k in ["ManutenÃ§Ã£o", "Manutencao", "Manutenção"]):
                 cols.append("Manutenção")
-            elif "Data" in col_s and "Garantia" not in col_s:
+            elif "Data" in c_str and "Garantia" not in c_str and "Aquisição" not in c_str:
                 cols.append("Data da tarefa")
-            elif "Garantia" in col_s:
+            elif "Garantia" in c_str:
                 cols.append("Data Garantia")
-            elif any(k in col_s for k in ["Problema", "Problemas"]):
+            elif any(k in c_str for k in ["Problema", "Problemas"]):
                 cols.append("Problema")
-            elif any(k in col_s for k in ["PeÃ§a", "Peca", "Peças"]):
+            elif any(k in c_str for k in ["PeÃ§a", "Peca", "Peças"]):
                 cols.append("Peça")
             else:
-                cols.append(col_s.strip())
+                cols.append(c_str)
         df.columns = cols
         return df
 
-    df_master = clean_column_names(df_master)
+    df_master = normalize_cols(df_master)
     if not df_dados.empty:
-        df_dados = clean_column_names(df_dados)
+        df_dados = normalize_cols(df_dados)
 
-    # Merge das tabelas
+    # Realiza o merge entre a aba Master e a aba Dados pelo Código Ar Verificado
     if not df_dados.empty and "Código Ar Verificado" in df_dados.columns and "Código Ar Verificado" in df_master.columns:
         df = pd.merge(df_master, df_dados, on="Código Ar Verificado", how="left")
     else:
         df = df_master.copy()
 
-    # Limpeza de colunas duplicadas
+    # Remove colunas duplicadas mantendo a primeira ocorrência
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df.reset_index(drop=True, inplace=True)
 
-    # Garante renomeação e existência de colunas essenciais
+    # Mapeamento final de renomeação
     col_map = {
         "Data": "Data da tarefa",
         "Manutenção": "Tipo",
@@ -114,16 +100,27 @@ def load_and_normalize_data():
     }
     df.rename(columns=col_map, inplace=True)
 
-    if "Data da tarefa" not in df.columns:
-        df["Data da tarefa"] = pd.NaT
-    else:
-        df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], errors="coerce", dayfirst=True)
-
-    # Limpa linhas inválidas ou completamente vazias
+    # Filtra linhas válidas (ignora linhas sem máquina ou preenchidas com 'None')
     if "Máquina" in df.columns:
         df = df[df["Máquina"].notnull()]
-        df = df[~df["Máquina"].astype(str).str.contains("^,", na=False)]
+        df = df[~df["Máquina"].astype(str).str.strip().isin(["None", "nan", ""])]
 
+    # Tratamento de Datas
+    if "Data da tarefa" in df.columns:
+        df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], errors="coerce", dayfirst=True)
+    else:
+        df["Data da tarefa"] = pd.NaT
+
+    if "Data Garantia" in df.columns:
+        df["Data Garantia"] = pd.to_datetime(df["Data Garantia"], errors="coerce", dayfirst=True)
+        df["Garantia"] = df.apply(
+            lambda r: "Dentro" if pd.notnull(r["Data Garantia"]) and pd.notnull(r["Data da tarefa"]) and r["Data Garantia"] >= r["Data da tarefa"] else "Fora",
+            axis=1
+        )
+    else:
+        df["Garantia"] = "Não informado"
+
+    # Preenchimento de campos vazios para os filtros
     for col in ["Cidade", "Estado", "Cliente", "Região", "Técnico", "Máquina", "Tipo"]:
         if col not in df.columns:
             df[col] = "Não especificado"
