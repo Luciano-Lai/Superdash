@@ -1,70 +1,45 @@
 import pandas as pd
 import streamlit as st
-import datetime
 
-# Link de exportação CSV da publicação pública do Google Sheets
-BASE_PUB_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub"
+# Link de exportação CSV direto retornado pela publicação do Google Sheets
+CSV_PUB_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?output=csv"
 
 @st.cache_data(ttl=60)
 def load_and_normalize_data():
     """
-    Lê a aba 'Dados' e 'Master' do Google Sheets publicado, desduplica colunas e trata a fusão.
+    Lê o CSV publicado diretamente do Google Sheets e normaliza a estrutura.
     """
     try:
-        url_dados = f"{BASE_PUB_URL}?gid=0&single=true&output=csv"
-        df_dados = pd.read_csv(url_dados, skiprows=2)
-    except Exception:
-        df_dados = pd.DataFrame()
+        # Lê o CSV público
+        df = pd.read_csv(CSV_PUB_URL)
+        
+        # Se a primeira linha contiver texto descritivo antes do cabeçalho, 
+        # localiza a linha que contém as colunas reais
+        if "Código Ar Verificado" not in df.columns and "Técnico" not in df.columns:
+            # Tenta encontrar a linha do cabeçalho dinamicamente
+            df_raw = pd.read_csv(CSV_PUB_URL, header=None)
+            header_row_idx = None
+            for idx, row in df_raw.iterrows():
+                row_str = row.astype(str).values
+                if any("Código Ar Verificado" in cell or "Técnico" in cell for cell in row_str):
+                    header_row_idx = idx
+                    break
+            
+            if header_row_idx is not None:
+                df = pd.read_csv(CSV_PUB_URL, skiprows=header_row_idx)
 
-    try:
-        url_master = f"{BASE_PUB_URL}?gid=1&single=true&output=csv"
-        df_master = pd.read_csv(url_master, skiprows=9)
-    except Exception:
-        df_master = pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao conectar com o Google Sheets: {e}")
+        return pd.DataFrame()
 
-    # Estrutura Resiliente de Fallback caso as tabelas venham vazias
-    if df_master.empty:
-        df_master = pd.DataFrame([
-            {
-                "Código Ar Verificado": "TMW6P",
-                "Técnico": "Thiago",
-                "Manutenção": "Corretiva",
-                "Data": "01/06/2026",
-                "Problemas Relatados": "Sensor de temperatura; Falha de refrigeração",
-                "Tarefa": "Troca de motor de ventilador",
-                "Peças Trocadas": "Motor de ventilador",
-                "Observações": "Pico de energia",
-                "Data Garantia": "30/08/2026",
-                "Cliente": "Cliente A", "Cidade": "São Paulo", "Região": "Sudeste", "Estado": "SP"
-            },
-            {
-                "Código Ar Verificado": "4E5VN",
-                "Técnico": "Thiago",
-                "Manutenção": "Preventiva",
-                "Data": "18/05/2026",
-                "Problemas Relatados": "Não informado",
-                "Tarefa": "Manutenção programada",
-                "Peças Trocadas": "Nenhuma",
-                "Observações": "Sem observações",
-                "Data Garantia": "18/05/2026",
-                "Cliente": "Cliente B", "Cidade": "Campinas", "Região": "Sudeste", "Estado": "SP"
-            }
-        ])
+    if df.empty:
+        return df
 
-    if df_dados.empty:
-        df_dados = pd.DataFrame([
-            {"Código Ar Verificado": "TMW6P", "Equipamento": "Chiller 50TR", "Tipo_Equipamento": "Industrial"},
-            {"Código Ar Verificado": "4E5VN", "Equipamento": "Split Wall 18k", "Tipo_Equipamento": "Comercial"}
-        ])
-
-    # Unifica informações e reseta o índice para evitar índices duplicados
-    df = pd.merge(df_master, df_dados, on="Código Ar Verificado", how="left")
-
-    # SOLUÇÃO DO ERRO: Remove colunas com nomes duplicados mantendo apenas a primeira ocorrência
+    # Remove colunas duplicadas mantendo apenas a primeira ocorrência
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df.reset_index(drop=True, inplace=True)
 
-    # Mapeamento para o padrão do Painel
+    # Mapeamento e padronização dos nomes de colunas
     col_map = {
         "Data": "Data da tarefa",
         "Manutenção": "Tipo",
@@ -74,8 +49,10 @@ def load_and_normalize_data():
     }
     df.rename(columns=col_map, inplace=True)
 
-    # Conversão e normalização de Datas
-    df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], dayfirst=True, errors="coerce")
+    # Conversão de Datas
+    if "Data da tarefa" in df.columns:
+        df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], dayfirst=True, errors="coerce")
+    
     if "Data Garantia" in df.columns:
         df["Data Garantia"] = pd.to_datetime(df["Data Garantia"], dayfirst=True, errors="coerce")
         df["Garantia"] = df.apply(
@@ -85,13 +62,20 @@ def load_and_normalize_data():
     else:
         df["Garantia"] = "Não informado"
 
-    # Preenchimento de colunas categóricas sem 'Não informado'
-    for col in ["Cidade", "Estado", "Cliente", "Região"]:
+    # Preenchimento de campos vazios/nulos nas colunas categóricas
+    for col in ["Cidade", "Estado", "Cliente", "Região", "Técnico", "Máquina", "Tipo"]:
         if col not in df.columns:
             df[col] = "Não especificado"
         df[col] = df[col].fillna("Não especificado")
 
-    df["Problema"] = df["Problema"].fillna("Não informado")
-    df["Peça"] = df["Peça"].fillna("Nenhuma")
+    if "Problema" in df.columns:
+        df["Problema"] = df["Problema"].fillna("Não informado")
+    else:
+        df["Problema"] = "Não informado"
+
+    if "Peça" in df.columns:
+        df["Peça"] = df["Peça"].fillna("Nenhuma")
+    else:
+        df["Peça"] = "Nenhuma"
 
     return df
