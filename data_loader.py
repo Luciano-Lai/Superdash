@@ -7,22 +7,24 @@ URL_ABA_DADOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNI
 
 def parse_sheet_with_header(url):
     """
-    Lê o CSV tratando encoding incorreto (UTF-8/CÃ³digo) e detectando
-    dinamicamente a linha exata do cabeçalho principal.
+    Lê o CSV tratando encoding incorreto e detectando dinamicamente
+    a linha do cabeçalho principal.
     """
     try:
-        # Lê em modo texto bruto tratando a codificação
         df_raw = pd.read_csv(url, header=None, encoding="utf-8-sig", on_bad_lines="skip")
         if df_raw.empty:
             return pd.DataFrame()
 
         header_idx = None
-        # Procura a linha que contém o código da máquina ou técnico na tabela real
         for idx, row in df_raw.iterrows():
             row_str = " ".join([str(cell) for cell in row.values if pd.notnull(cell)])
-            # Busca flexível que tolera erro de codificação UTF-8 ('CÃ³digo' ou 'Codigo')
-            if ("digo" in row_str or "Codigo" in row_str or "Técnico" in row_str or "Tecnico" in row_str) and "Equipamento" not in row_str:
-                header_idx = idx
+            # Procura por palavras-chave na linha real da tabela
+            if ("digo" in row_str or "Codigo" in row_str or "Técnico" in row_str or "Tecnico" in row_str or "TMW6P" in row_str or "4E5VN" in row_str):
+                # Se for a linha dos dados (ex: TMW6P), o cabeçalho é a linha imediatamente anterior
+                if "TMW6P" in row_str or "4E5VN" in row_str:
+                    header_idx = max(0, idx - 1)
+                else:
+                    header_idx = idx
                 break
 
         if header_idx is not None:
@@ -30,25 +32,32 @@ def parse_sheet_with_header(url):
         else:
             df = pd.read_csv(url, encoding="utf-8-sig")
 
-        # Normaliza os nomes das colunas removendo caracteres estranhos de acentuação
+        # Mapeamento e normalização robusta das colunas
         new_cols = []
         for col in df.columns:
             c = str(col).strip()
-            if "CÃ³digo" in c or "digo Ar" in c or "Codigo Ar" in c:
+            if any(k in c for k in ["CÃ³digo", "digo Ar", "Codigo Ar"]):
                 new_cols.append("Código Ar Verificado")
-            elif "TÃ©cnico" in c or "Tecnico" in c:
+            elif any(k in c for k in ["TÃ©cnico", "Tecnico"]):
                 new_cols.append("Técnico")
-            elif "ManutenÃ§Ã£o" in c or "Manutencao" in c:
+            elif any(k in c for k in ["ManutenÃ§Ã£o", "Manutencao"]):
                 new_cols.append("Manutenção")
             elif "Data" in c and "Garantia" not in c:
-                new_cols.append("Data")
+                new_cols.append("Data da tarefa")
+            elif "Garantia" in c:
+                new_cols.append("Data Garantia")
+            elif any(k in c for k in ["Problema", "Problemas"]):
+                new_cols.append("Problema")
+            elif any(k in c for k in ["PeÃ§a", "Peca", "Peças"]):
+                new_cols.append("Peça")
             else:
                 new_cols.append(c)
+        
         df.columns = new_cols
         return df
 
     except Exception as e:
-        st.error(f"Erro ao ler URL {url}: {e}")
+        st.error(f"Erro ao ler URL do Google Sheets: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
@@ -57,38 +66,39 @@ def load_and_normalize_data():
     df_dados = parse_sheet_with_header(URL_ABA_DADOS)
 
     if df_master.empty:
-        st.warning("Não foi possível carregar os dados da aba Master.")
-        return pd.DataFrame()
+        # Retorna DataFrame com estrutura mínima para evitar KeyError
+        return pd.DataFrame(columns=["Data da tarefa", "Tipo", "Máquina", "Técnico", "Cliente", "Cidade", "Região", "Estado"])
 
-    # Cruza as tabelas se a chave existir
+    # Realiza a fusão entre as duas abas se a chave existir
     if not df_dados.empty and "Código Ar Verificado" in df_dados.columns and "Código Ar Verificado" in df_master.columns:
         df = pd.merge(df_master, df_dados, on="Código Ar Verificado", how="left")
     else:
         df = df_master.copy()
 
-    # Remove linhas vazias ou de separadores de data do Google Sheets
+    # Remove linhas de lixo ou rodapés
     if "Código Ar Verificado" in df.columns:
         df = df[df["Código Ar Verificado"].notnull()]
         df = df[~df["Código Ar Verificado"].astype(str).str.contains(",", na=False)]
 
-    # Elimina colunas duplicadas
+    # Remove colunas duplicadas
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df.reset_index(drop=True, inplace=True)
 
-    # Mapeamento para o padrão oficial do aplicativo
+    # Renomeação final de segurança
     col_map = {
         "Data": "Data da tarefa",
         "Manutenção": "Tipo",
-        "Código Ar Verificado": "Máquina",
-        "Problemas Relatados": "Problema",
-        "Peças Trocadas": "Peça"
+        "Código Ar Verificado": "Máquina"
     }
     df.rename(columns=col_map, inplace=True)
 
-    # Normalização de Datas
-    if "Data da tarefa" in df.columns:
+    # GARANTIA DE SEGURANÇA: Se a coluna "Data da tarefa" não existir, cria como NaT
+    if "Data da tarefa" not in df.columns:
+        df["Data da tarefa"] = pd.NaT
+    else:
         df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], errors="coerce", dayfirst=True)
 
+    # Garantia de colunas de garantia
     if "Data Garantia" in df.columns:
         df["Data Garantia"] = pd.to_datetime(df["Data Garantia"], errors="coerce", dayfirst=True)
         df["Garantia"] = df.apply(
@@ -98,7 +108,7 @@ def load_and_normalize_data():
     else:
         df["Garantia"] = "Não informado"
 
-    # Preenchimento de nulos para as opções de filtro
+    # Preenchimento de campos categóricos para os filtros
     for col in ["Cidade", "Estado", "Cliente", "Região", "Técnico", "Máquina", "Tipo"]:
         if col not in df.columns:
             df[col] = "Não especificado"
