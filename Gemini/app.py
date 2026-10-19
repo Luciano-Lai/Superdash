@@ -1,10 +1,15 @@
 import os
 import sys
 
-# Força a inclusão do diretório 'Gemini' no sys.path do Python
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-if CURRENT_DIR not in sys.path:
-    sys.path.insert(0, CURRENT_DIR)
+# Pega o caminho absoluto da pasta onde este arquivo app.py está localizado (Gemini/)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Força o Python a colocar essa pasta como PRIORIDADE MÁXIMA de busca de módulos
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+# Mude o diretório de trabalho atual do processo para a pasta Gemini
+os.chdir(SCRIPT_DIR)
 
 import streamlit as st
 from data_loader import load_and_normalize_data
