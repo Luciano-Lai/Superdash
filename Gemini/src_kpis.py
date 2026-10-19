@@ -2,9 +2,6 @@ import streamlit as st
 import pandas as pd
 
 def calculate_kpis(df):
-    """
-    Calcula os 11 KPIs principais de acordo com as regras de negócio.
-    """
     total = len(df)
     preventivas = len(df[df["Tipo"] == "Preventiva"])
     corretivas = len(df[df["Tipo"] == "Corretiva"])
@@ -19,13 +16,11 @@ def calculate_kpis(df):
     em_garantia = len(df_corr[df_corr["Garantia"] == "Dentro"])
     fora_garantia = len(df_corr[df_corr["Garantia"] == "Fora"])
 
-    # Problema mais frequente
-    prob_series = df_corr["Problema"].str.split(";").explode().str.strip()
+    prob_series = df_corr["Problema"].dropna().astype(str).str.split(";").explode().str.strip()
     prob_series = prob_series[prob_series != "Não informado"]
     prob_mais_freq = prob_series.mode()[0] if not prob_series.empty else "—"
 
-    # Peça mais trocada
-    peca_series = df["Peça"].str.split(";").explode().str.strip()
+    peca_series = df["Peça"].dropna().astype(str).str.split(";").explode().str.strip()
     peca_series = peca_series[~peca_series.isin(["Nenhuma", "Não informado"])]
     peca_mais_trocada = peca_series.mode()[0] if not peca_series.empty else "—"
 
@@ -44,9 +39,6 @@ def calculate_kpis(df):
     }
 
 def render_kpi_cards(selected_kpis, kpi_values):
-    """
-    Exibe os cartões de KPIs selecionados em até 4 colunas por linha.
-    """
     if not selected_kpis:
         return
 
