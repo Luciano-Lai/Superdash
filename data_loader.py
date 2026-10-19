@@ -1,51 +1,59 @@
 import pandas as pd
 import streamlit as st
 
-# Link de exportação CSV da publicação pública do Google Sheets
-CSV_PUB_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?output=csv"
+# Links diretos para cada aba do Google Sheets via CSV
+URL_ABA_MASTER = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=1187149031&single=true&output=csv"
+URL_ABA_DADOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=152468513&single=true&output=csv"
+
+def parse_sheet_with_header(url):
+    """
+    Lê o CSV de uma aba do Google Sheets, detectando automaticamente
+    a linha onde estão localizados os nomes das colunas.
+    """
+    try:
+        df_raw = pd.read_csv(url, header=None)
+        if df_raw.empty:
+            return pd.DataFrame()
+
+        header_idx = None
+        keywords = ["Código Ar Verificado", "Técnico", "Manutenção", "Equipamento", "Cliente", "Data"]
+
+        for idx, row in df_raw.iterrows():
+            row_str = [str(cell) for cell in row.values if pd.notnull(cell)]
+            if any(k in cell for cell in row_str for k in keywords):
+                header_idx = idx
+                break
+
+        if header_idx is not None:
+            return pd.read_csv(url, skiprows=header_idx)
+        return pd.read_csv(url)
+    except Exception as e:
+        st.error(f"Erro ao carregar a aba do link {url}: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_and_normalize_data():
     """
-    Lê o CSV publicado diretamente do Google Sheets e normaliza a estrutura.
+    Carrega as duas abas, cruza os dados e normaliza a estrutura para o painel.
     """
-    try:
-        # Lê o CSV público em formato bruto
-        df_raw = pd.read_csv(CSV_PUB_URL, header=None)
-        
-        if df_raw.empty:
-            return pd.DataFrame()
+    df_master = parse_sheet_with_header(URL_ABA_MASTER)
+    df_dados = parse_sheet_with_header(URL_ABA_DADOS)
 
-        # Localiza dinamicamente a linha que contém o cabeçalho real
-        header_row_idx = None
-        for idx, row in df_raw.iterrows():
-            # Converte todas as células da linha para string para evitar erro com float/NaN
-            row_str_list = [str(cell) for cell in row.values if pd.notnull(cell)]
-            if any("Código Ar Verificado" in cell or "Técnico" in cell or "Manutenção" in cell for cell in row_str_list):
-                header_row_idx = idx
-                break
-
-        if header_row_idx is not None:
-            df = pd.read_csv(CSV_PUB_URL, skiprows=header_row_idx)
-        else:
-            # Caso não encontre a palavra-chave, lê o CSV normalmente
-            df = pd.read_csv(CSV_PUB_URL)
-
-    except Exception as e:
-        st.error(f"Erro ao conectar com o Google Sheets: {e}")
+    if df_master.empty:
+        st.warning("A aba principal (Master) retornou vazia ou inacessível.")
         return pd.DataFrame()
 
-    if df.empty:
-        return df
+    # Cruza os dados das duas abas se a chave existir em ambas
+    if not df_dados.empty and "Código Ar Verificado" in df_dados.columns and "Código Ar Verificado" in df_master.columns:
+        df = pd.merge(df_master, df_dados, on="Código Ar Verificado", how="left")
+    else:
+        df = df_master.copy()
 
-    # Limpa linhas totalmente vazias e ajusta os nomes das colunas
-    df.dropna(how="all", inplace=True)
-
-    # Remove colunas duplicadas mantendo apenas a primeira ocorrência
+    # Remove colunas duplicadas mantendo a primeira ocorrência
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df.reset_index(drop=True, inplace=True)
 
-    # Mapeamento e padronização dos nomes de colunas
+    # Padronização de nomes de colunas
     col_map = {
         "Data": "Data da tarefa",
         "Manutenção": "Tipo",
@@ -55,15 +63,14 @@ def load_and_normalize_data():
     }
     df.rename(columns=col_map, inplace=True)
 
-    # Conversão e normalização de Datas
+    # Tratamento da coluna de datas
     if "Data da tarefa" in df.columns:
-        df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], dayfirst=True, errors="coerce")
+        df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], errors="coerce", dayfirst=True)
     else:
-        # Se por algum motivo a coluna não existir, cria a coluna de data para não quebrar os filtros
         df["Data da tarefa"] = pd.NaT
 
     if "Data Garantia" in df.columns:
-        df["Data Garantia"] = pd.to_datetime(df["Data Garantia"], dayfirst=True, errors="coerce")
+        df["Data Garantia"] = pd.to_datetime(df["Data Garantia"], errors="coerce", dayfirst=True)
         df["Garantia"] = df.apply(
             lambda r: "Dentro" if pd.notnull(r["Data Garantia"]) and pd.notnull(r["Data da tarefa"]) and r["Data Garantia"] >= r["Data da tarefa"] else "Fora",
             axis=1
@@ -71,20 +78,13 @@ def load_and_normalize_data():
     else:
         df["Garantia"] = "Não informado"
 
-    # Preenchimento de campos vazios/nulos nas colunas categóricas
+    # Preenchimento de nulos para categorias do filtro
     for col in ["Cidade", "Estado", "Cliente", "Região", "Técnico", "Máquina", "Tipo"]:
         if col not in df.columns:
             df[col] = "Não especificado"
         df[col] = df[col].fillna("Não especificado")
 
-    if "Problema" in df.columns:
-        df["Problema"] = df["Problema"].fillna("Não informado")
-    else:
-        df["Problema"] = "Não informado"
-
-    if "Peça" in df.columns:
-        df["Peça"] = df["Peça"].fillna("Nenhuma")
-    else:
-        df["Peça"] = "Nenhuma"
+    df["Problema"] = df["Problema"].fillna("Não informado") if "Problema" in df.columns else "Não informado"
+    df["Peça"] = df["Peça"].fillna("Nenhuma") if "Peça" in df.columns else "Nenhuma"
 
     return df
