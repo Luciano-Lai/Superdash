@@ -1,59 +1,81 @@
 import pandas as pd
 import streamlit as st
 
-# Links diretos para cada aba do Google Sheets via CSV
+# Links CSV diretos das abas do Google Sheets
 URL_ABA_MASTER = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=1187149031&single=true&output=csv"
 URL_ABA_DADOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub?gid=152468513&single=true&output=csv"
 
 def parse_sheet_with_header(url):
     """
-    Lê o CSV de uma aba do Google Sheets, detectando automaticamente
-    a linha onde estão localizados os nomes das colunas.
+    Lê o CSV tratando encoding incorreto (UTF-8/CÃ³digo) e detectando
+    dinamicamente a linha exata do cabeçalho principal.
     """
     try:
-        df_raw = pd.read_csv(url, header=None)
+        # Lê em modo texto bruto tratando a codificação
+        df_raw = pd.read_csv(url, header=None, encoding="utf-8-sig", on_bad_lines="skip")
         if df_raw.empty:
             return pd.DataFrame()
 
         header_idx = None
-        keywords = ["Código Ar Verificado", "Técnico", "Manutenção", "Equipamento", "Cliente", "Data"]
-
+        # Procura a linha que contém o código da máquina ou técnico na tabela real
         for idx, row in df_raw.iterrows():
-            row_str = [str(cell) for cell in row.values if pd.notnull(cell)]
-            if any(k in cell for cell in row_str for k in keywords):
+            row_str = " ".join([str(cell) for cell in row.values if pd.notnull(cell)])
+            # Busca flexível que tolera erro de codificação UTF-8 ('CÃ³digo' ou 'Codigo')
+            if ("digo" in row_str or "Codigo" in row_str or "Técnico" in row_str or "Tecnico" in row_str) and "Equipamento" not in row_str:
                 header_idx = idx
                 break
 
         if header_idx is not None:
-            return pd.read_csv(url, skiprows=header_idx)
-        return pd.read_csv(url)
+            df = pd.read_csv(url, skiprows=header_idx, encoding="utf-8-sig")
+        else:
+            df = pd.read_csv(url, encoding="utf-8-sig")
+
+        # Normaliza os nomes das colunas removendo caracteres estranhos de acentuação
+        new_cols = []
+        for col in df.columns:
+            c = str(col).strip()
+            if "CÃ³digo" in c or "digo Ar" in c or "Codigo Ar" in c:
+                new_cols.append("Código Ar Verificado")
+            elif "TÃ©cnico" in c or "Tecnico" in c:
+                new_cols.append("Técnico")
+            elif "ManutenÃ§Ã£o" in c or "Manutencao" in c:
+                new_cols.append("Manutenção")
+            elif "Data" in c and "Garantia" not in c:
+                new_cols.append("Data")
+            else:
+                new_cols.append(c)
+        df.columns = new_cols
+        return df
+
     except Exception as e:
-        st.error(f"Erro ao carregar a aba do link {url}: {e}")
+        st.error(f"Erro ao ler URL {url}: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_and_normalize_data():
-    """
-    Carrega as duas abas, cruza os dados e normaliza a estrutura para o painel.
-    """
     df_master = parse_sheet_with_header(URL_ABA_MASTER)
     df_dados = parse_sheet_with_header(URL_ABA_DADOS)
 
     if df_master.empty:
-        st.warning("A aba principal (Master) retornou vazia ou inacessível.")
+        st.warning("Não foi possível carregar os dados da aba Master.")
         return pd.DataFrame()
 
-    # Cruza os dados das duas abas se a chave existir em ambas
+    # Cruza as tabelas se a chave existir
     if not df_dados.empty and "Código Ar Verificado" in df_dados.columns and "Código Ar Verificado" in df_master.columns:
         df = pd.merge(df_master, df_dados, on="Código Ar Verificado", how="left")
     else:
         df = df_master.copy()
 
-    # Remove colunas duplicadas mantendo a primeira ocorrência
+    # Remove linhas vazias ou de separadores de data do Google Sheets
+    if "Código Ar Verificado" in df.columns:
+        df = df[df["Código Ar Verificado"].notnull()]
+        df = df[~df["Código Ar Verificado"].astype(str).str.contains(",", na=False)]
+
+    # Elimina colunas duplicadas
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df.reset_index(drop=True, inplace=True)
 
-    # Padronização de nomes de colunas
+    # Mapeamento para o padrão oficial do aplicativo
     col_map = {
         "Data": "Data da tarefa",
         "Manutenção": "Tipo",
@@ -63,11 +85,9 @@ def load_and_normalize_data():
     }
     df.rename(columns=col_map, inplace=True)
 
-    # Tratamento da coluna de datas
+    # Normalização de Datas
     if "Data da tarefa" in df.columns:
         df["Data da tarefa"] = pd.to_datetime(df["Data da tarefa"], errors="coerce", dayfirst=True)
-    else:
-        df["Data da tarefa"] = pd.NaT
 
     if "Data Garantia" in df.columns:
         df["Data Garantia"] = pd.to_datetime(df["Data Garantia"], errors="coerce", dayfirst=True)
@@ -78,7 +98,7 @@ def load_and_normalize_data():
     else:
         df["Garantia"] = "Não informado"
 
-    # Preenchimento de nulos para categorias do filtro
+    # Preenchimento de nulos para as opções de filtro
     for col in ["Cidade", "Estado", "Cliente", "Região", "Técnico", "Máquina", "Tipo"]:
         if col not in df.columns:
             df[col] = "Não especificado"
