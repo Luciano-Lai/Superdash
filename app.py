@@ -3,7 +3,7 @@ import os
 import streamlit as st
 import pandas as pd
 
-# 1. Ajuste estrito de caminhos para solucionar o ModuleNotFoundError em qualquer servidor
+# 1. Ajuste de caminhos para a pasta 'view'
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIEW_DIR = os.path.join(BASE_DIR, "view")
 VIEWS_DIR = os.path.join(BASE_DIR, "views")
@@ -83,7 +83,6 @@ def execute_view(mod, fallback_func, df):
         if hasattr(mod, func_name):
             getattr(mod, func_name)(df)
             return
-    # Caso o módulo não tenha função direta, executa a versão aprimorada do ui
     fallback_func(df)
 
 # --- NAVEGAÇÃO EXECUTIVA POR ABAS FLUIDAS ---
