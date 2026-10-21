@@ -9,16 +9,10 @@ from data_loader import clean, norm
 INVALID = {"", "nenhuma", "nenhum", "nao informado", "nan", "none", "<na>"}
 
 KPI_BAD_WHEN_UP = {
-    "Corretivas",
-    "% Corretivas",
-    "Corretivas em garantia",
-    "Corretivas fora da garantia",
+    "Corretivas", "% Corretivas",
+    "Corretivas em garantia", "Corretivas fora da garantia",
 }
-
-KPI_GOOD_WHEN_UP = {
-    "Preventivas",
-    "% Preventivas",
-}
+KPI_GOOD_WHEN_UP = {"Preventivas", "% Preventivas"}
 
 TOOLTIPS = {
     "Total de tarefas": "Todas as tarefas do recorte atual.",
@@ -59,7 +53,6 @@ NUMERIC_KPIS = {
     "Máquinas atendidas", "Técnicos envolvidos",
     "Corretivas em garantia", "Corretivas fora da garantia",
 }
-
 PERCENT_KPIS = {"% Preventivas", "% Corretivas"}
 TEXT_KPIS = {"Problema mais frequente", "Peça mais trocada"}
 
@@ -107,10 +100,8 @@ def calculate_kpis_with_delta(df, previous_df=None):
     current = calculate_kpis(df)
     if previous_df is None or previous_df.empty:
         return current, {}, {}
-
     previous = calculate_kpis(previous_df)
     deltas = {}
-
     for name, value in current.items():
         pv = previous.get(name)
         if (
@@ -121,32 +112,24 @@ def calculate_kpis_with_delta(df, previous_df=None):
             and pv > 0
         ):
             deltas[name] = (value - pv) / pv * 100
-
     return current, deltas, previous
 
 
 def compute_kpi_series(raw, effective_spec, buckets=6):
-    """
-    Calcula cada KPI em `buckets` janelas consecutivas anteriores
-    + período atual. Usado para desenhar os sparklines.
-    """
     from filters import apply_filters
 
     period = effective_spec.get("period")
     if not (isinstance(period, (tuple, list)) and len(period) == 2):
         return {}
-
     try:
         start, end = map(pd.Timestamp, period)
     except Exception:
         return {}
-
     duration = (end - start).days + 1
     if duration <= 0:
         return {}
 
     series = {}
-
     for i in range(buckets, 0, -1):
         b_end = start - pd.Timedelta(days=(i - 1) * duration)
         b_start = b_end - pd.Timedelta(days=duration - 1)
@@ -167,7 +150,7 @@ def compute_kpi_series(raw, effective_spec, buckets=6):
     return series
 
 
-def _sparkline_svg(values, color="#0284C7", height=28):
+def _sparkline_svg(values, color="#0284C7", height=48):
     numeric = [
         float(v) for v in values
         if isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -184,7 +167,7 @@ def _sparkline_svg(values, color="#0284C7", height=28):
     points = []
     for i, v in enumerate(numeric):
         x = (i / (n - 1)) * w
-        y = h - ((v - min_v) / (max_v - min_v)) * (h - 6) - 3
+        y = h - ((v - min_v) / (max_v - min_v)) * (h - 8) - 4
         points.append(f"{x:.1f},{y:.1f}")
 
     poly = " ".join(points)
@@ -192,10 +175,16 @@ def _sparkline_svg(values, color="#0284C7", height=28):
 
     return (
         f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
-        f'style="width:100%;height:{h}px;display:block">'
-        f'<polygon points="{area}" fill="{color}" fill-opacity="0.12"/>'
+        f'style="width:100%;height:{h}px;display:block;margin:6px 0 0 0">'
+        f'<defs>'
+        f'<linearGradient id="sg{id(values)}" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0%" stop-color="{color}" stop-opacity="0.28"/>'
+        f'<stop offset="100%" stop-color="{color}" stop-opacity="0"/>'
+        f'</linearGradient>'
+        f'</defs>'
+        f'<polygon points="{area}" fill="url(#sg{id(values)})"/>'
         f'<polyline points="{poly}" fill="none" stroke="{color}" '
-        f'stroke-width="1.8" vector-effect="non-scaling-stroke" '
+        f'stroke-width="2.2" vector-effect="non-scaling-stroke" '
         f'stroke-linejoin="round" stroke-linecap="round"/>'
         f'</svg>'
     )
@@ -204,21 +193,18 @@ def _sparkline_svg(values, color="#0284C7", height=28):
 def _border_and_delta_class(name, delta):
     if delta is None:
         return "kpi-border-primary", None
-
     if name in KPI_BAD_WHEN_UP:
         if delta > 0:
             return "kpi-border-danger", "kpi-delta-bad"
         if delta < 0:
             return "kpi-border-success", "kpi-delta-good"
         return "kpi-border-neutral", "kpi-delta-flat"
-
     if name in KPI_GOOD_WHEN_UP:
         if delta > 0:
             return "kpi-border-success", "kpi-delta-good"
         if delta < 0:
             return "kpi-border-danger", "kpi-delta-bad"
         return "kpi-border-neutral", "kpi-delta-flat"
-
     return "kpi-border-primary", "kpi-delta-flat"
 
 
@@ -235,7 +221,6 @@ def build_kpi_card(name, values, deltas, series, previous):
     value = values.get(name, "—")
     delta = deltas.get(name)
     prev_val = previous.get(name)
-
     border, delta_class = _border_and_delta_class(name, delta)
 
     if name in TEXT_KPIS:
@@ -258,7 +243,6 @@ def build_kpi_card(name, values, deltas, series, previous):
         )
 
     viz_html = ""
-
     if name in PERCENT_KPIS:
         pct = _parse_percent(value)
         if pct is not None:
@@ -328,7 +312,6 @@ def render_kpi_cards(selected_kpis, values, deltas=None, series=None, previous=N
     deltas = deltas or {}
     series = series or {}
     previous = previous or {}
-
     for start in range(0, len(selected_kpis), 4):
         group = selected_kpis[start:start + 4]
         columns = st.columns(4)
