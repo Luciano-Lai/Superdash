@@ -1,27 +1,30 @@
+import sys
+import os
 import streamlit as st
 import pandas as pd
+
+# Adiciona o diretório raiz ao sys.path para garantir importação segura dos módulos na pasta view
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Importações dos módulos nativos do SuperDash
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
 
-# Importação de todas as visões originais do SuperDash
+# Importação defensiva dos módulos de visualização
 try:
-    from view.monitoramento import render_monitoramento
-    from view.maquinas import render_maquinas
-    from view.corretivas import render_corretivas
-    from view.clientes_regioes import render_clientes_regioes
-    from view.analise_tarefas import render_analise_tarefas
-except ImportError:
-    # Fallback de segurança para importações diretas ou relativas
-    from view import (
-        render_monitoramento,
-        render_maquinas,
-        render_corretivas,
-        render_clientes_regioes,
-        render_analise_tarefas,
-    )
+    import view.monitoramento as v_mon
+    import view.maquinas as v_maq
+    import view.corretivas as v_corr
+    import view.clientes_regioes as v_cli
+    import view.analise_tarefas as v_tar
+except ModuleNotFoundError:
+    # Caso a pasta 'view' não seja reconhecida como pacote, importa diretamente pelos arquivos
+    from view import monitoramento as v_mon
+    from view import maquinas as v_maq
+    from view import corretivas as v_corr
+    from view import clientes_regioes as v_cli
+    from view import analise_tarefas as v_tar
 
 # 1. Configuração da página executiva
 st.set_page_config(
@@ -31,10 +34,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Injeção de Estilo Executivo (Header, Cards KPI e Menu de Navegação Fluidos)
+# 2. Injeção de Estilo Executivo
 st.markdown("""
     <style>
-        /* Fundo limpo e tipografia */
         .main { background-color: #F8FAFC; }
         
         /* Cabeçalho Executivo em Tom Navy */
@@ -120,8 +122,7 @@ if df_raw.empty:
 filter_output = render_sidebar_filters(df_raw)
 df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
 
-# --- TOPO EXECUTIVO: CABEÇALHO & CARDS DE KPI DE IMPACTO ---
-
+# --- TOPO EXECUTIVO: CABEÇALHO & CARDS DE KPI ---
 st.markdown("""
     <div class="exec-header-container">
         <div class="exec-header-title">❄️ SuperDash - Monitoramento & Inteligência de Refrigeração</div>
@@ -172,8 +173,16 @@ with c4:
 
 st.write("")
 
-# --- NAVEGAÇÃO FLUIDA: RESTAURANDO 100% DAS VISÕES ORIGINAIS DO SUPERDASH ---
+# --- Helper para execução segura das visões ---
+def safe_render(module, default_func_names, df):
+    """Procura e executa a função principal do módulo da aba sem estourar exceção"""
+    for func_name in default_func_names:
+        if hasattr(module, func_name):
+            getattr(module, func_name)(df)
+            return
+    st.info("Visão em carregamento ou sem função pública padrão detectada.")
 
+# --- NAVEGAÇÃO FLUIDA COM TODAS AS VISÕES ORIGINAIS ---
 tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
     "📊 Monitoramento Geral", 
     "⚙️ Máquinas & Comparativos", 
@@ -183,21 +192,20 @@ tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
     "📋 Tabela Operacional"
 ])
 
-# Renderização direta das funções originais em cada aba respectiva
 with tab_mon:
-    render_monitoramento(df_filtered)
+    safe_render(v_mon, ["render_monitoramento", "render", "main"], df_filtered)
 
 with tab_maq:
-    render_maquinas(df_filtered)
+    safe_render(v_maq, ["render_maquinas", "render", "main"], df_filtered)
 
 with tab_corr:
-    render_corretivas(df_filtered)
+    safe_render(v_corr, ["render_corretivas", "render", "main"], df_filtered)
 
 with tab_cli:
-    render_clientes_regioes(df_filtered)
+    safe_render(v_cli, ["render_clientes_regioes", "render", "main"], df_filtered)
 
 with tab_taref:
-    render_analise_tarefas(df_filtered)
+    safe_render(v_tar, ["render_analise_tarefas", "render", "main"], df_filtered)
 
 with tab_raw:
     st.subheader("Base Operacional Completa")
