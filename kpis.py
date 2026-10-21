@@ -62,21 +62,23 @@ TEXT_KPIS = {"Problema mais frequente", "Peça mais trocada"}
 
 
 def _as_number(value):
-    """
-    Converte o valor do KPI em float quando possível.
-    Aceita números crus e strings no formato '45,0%'.
-    Retorna None se não for numérico ('—', texto).
-    """
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
+    """Converte qualquer coisa numérica (int, float, numpy, pd.NA, '45,0%') em float."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
     if isinstance(value, str):
-        cleaned = value.strip()
-        if cleaned.endswith("%"):
-            try:
-                return float(cleaned.replace("%", "").replace(",", ".").strip())
-            except ValueError:
-                return None
-    return None
+        cleaned = value.strip().replace("%", "").replace(",", ".").strip()
+        if not cleaned:
+            return None
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def occurrence_frame(df, column):
@@ -121,18 +123,29 @@ def calculate_kpis(df):
 
 def calculate_kpis_with_delta(df, previous_df=None):
     """
-    Retorna (values, deltas, previous).
+    Retorna (values, deltas, previous, reasons).
 
     deltas[name] é:
-      - variação relativa em % (para contagens numéricas)
-      - diferença em pontos percentuais (p.p.) para KPIs de taxa
+      - variação relativa em % (contagens)
+      - diferença em pontos percentuais (p.p.) para taxas
+
+    reasons[name] explica por que um KPI não tem delta:
+      - 'zero_previous'          → havia 0 no período anterior
+      - 'not_numeric'            → valor não numérico (texto, '—')
+      - 'empty_previous_period'  → o período anterior inteiro está vazio
+      - 'no_previous_period'     → nem foi possível calcular o período anterior
     """
     current = calculate_kpis(df)
-    if previous_df is None or previous_df.empty:
-        return current, {}, {}
+
+    if previous_df is None:
+        return current, {}, {}, {"_global": "no_previous_period"}
+
+    if previous_df.empty:
+        return current, {}, {}, {"_global": "empty_previous_period"}
 
     previous = calculate_kpis(previous_df)
     deltas = {}
+    reasons = {}
 
     for name, value in current.items():
         if name in TEXT_KPIS:
@@ -142,17 +155,18 @@ def calculate_kpis_with_delta(df, previous_df=None):
         prev_num = _as_number(previous.get(name))
 
         if cur_num is None or prev_num is None:
+            reasons[name] = "not_numeric"
             continue
 
         if name in PERCENT_KPIS:
-            # Taxa: diferença em pontos percentuais
             deltas[name] = cur_num - prev_num
         else:
-            # Contagem: variação relativa
             if prev_num > 0:
                 deltas[name] = (cur_num - prev_num) / prev_num * 100
+            else:
+                reasons[name] = "zero_previous"
 
-    return current, deltas, previous
+    return current, deltas, previous, reasons
 
 
 def compute_kpi_series(raw, effective_spec, buckets=6):
@@ -249,46 +263,66 @@ def _border_and_delta_class(name, delta):
     return "kpi-border-primary", "kpi-delta-flat"
 
 
-def build_kpi_card(name, values, deltas, series, previous):
+def _delta_html(name, delta, reason):
+    """Retorna o HTML do badge de delta (ou do motivo de ausência)."""
+    if name in TEXT_KPIS:
+        return ""
+
+    if delta is not None:
+        arrow = "▲" if delta > 0 else "▼" if delta < 0 else "≡"
+        if name in PERCENT_KPIS:
+            d_fmt = f"{abs(delta):.1f} p.p.".replace(".", ",")
+            title = "Diferença em pontos percentuais vs período anterior"
+        else:
+            d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
+            title = "Variação relativa vs período anterior"
+        return (
+            f'<span class="kpi-delta {("kpi-delta-good" if (delta > 0 and name in KPI_GOOD_WHEN_UP) or (delta < 0 and name in KPI_BAD_WHEN_UP) else "kpi-delta-bad" if delta != 0 else "kpi-delta-flat")}" '
+            f'title="{escape(title)}">{arrow} {d_fmt}</span>'
+        )
+
+    if reason == "zero_previous":
+        return (
+            '<span class="kpi-delta kpi-delta-flat" '
+            'title="Zero no período anterior; este valor é novo.">'
+            'novo</span>'
+        )
+
+    if reason in ("empty_previous_period", "no_previous_period"):
+        return (
+            '<span class="kpi-delta kpi-delta-flat" '
+            'title="Sem dados no período anterior para comparar. '
+            'Reduza a data inicial no filtro Período.">'
+            'sem base</span>'
+        )
+
+    return (
+        '<span class="kpi-delta kpi-delta-flat" '
+        'title="Valor não numérico ou período sem dados.">—</span>'
+    )
+
+
+def build_kpi_card(name, values, deltas, series, previous, reasons=None):
+    reasons = reasons or {}
     value = values.get(name, "—")
     delta = deltas.get(name)
     prev_val = previous.get(name)
-    border, delta_class = _border_and_delta_class(name, delta)
+    reason = reasons.get(name, reasons.get("_global"))
+    border, _ = _border_and_delta_class(name, delta)
 
     if name in TEXT_KPIS:
         val_class = "kpi-value-text"
         display = str(value) if str(value).strip() else "—"
-    elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        val_class = "kpi-value"
-        display = f"{int(value):,}".replace(",", ".")
     else:
+        num = _as_number(value)
         val_class = "kpi-value"
-        display = str(value)
+        display = (
+            f"{int(num):,}".replace(",", ".") if num is not None
+            else str(value)
+        )
 
-    # ---------- Badge de delta (topo direito) ----------
-    delta_html = ""
-    if name not in TEXT_KPIS:
-        if delta is not None:
-            arrow = "▲" if delta > 0 else "▼" if delta < 0 else "≡"
-            if name in PERCENT_KPIS:
-                d_fmt = f"{abs(delta):.1f} p.p.".replace(".", ",")
-                title = "Diferença em pontos percentuais vs período anterior"
-            else:
-                d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
-                title = "Variação relativa vs período anterior"
-            delta_html = (
-                f'<span class="kpi-delta {delta_class}" title="{escape(title)}">'
-                f'{arrow} {d_fmt}</span>'
-            )
-        else:
-            delta_html = (
-                '<span class="kpi-delta kpi-delta-flat" '
-                'title="Sem período anterior comparável. Reduza a data '
-                'inicial no filtro Período.">'
-                'sem base</span>'
-            )
+    delta_html = _delta_html(name, delta, reason)
 
-    # ---------- Visualização interna ----------
     viz_html = ""
     if name in PERCENT_KPIS:
         pct = _as_number(value)
@@ -324,7 +358,6 @@ def build_kpi_card(name, values, deltas, series, previous):
         if svg:
             viz_html = f'<div class="kpi-sparkline">{svg}</div>'
 
-    # ---------- Rodapé (valor anterior) ----------
     footer = ""
     if name not in TEXT_KPIS:
         prev_num = _as_number(prev_val)
@@ -359,15 +392,20 @@ def build_kpi_card(name, values, deltas, series, previous):
     )
 
 
-def render_kpi_cards(selected_kpis, values, deltas=None, series=None, previous=None):
+def render_kpi_cards(
+    selected_kpis, values, deltas=None, series=None, previous=None, reasons=None,
+):
     deltas = deltas or {}
     series = series or {}
     previous = previous or {}
+    reasons = reasons or {}
     for start in range(0, len(selected_kpis), 4):
         group = selected_kpis[start:start + 4]
         columns = st.columns(4)
         for col, name in zip(columns, group):
             col.markdown(
-                build_kpi_card(name, values, deltas, series, previous),
+                build_kpi_card(
+                    name, values, deltas, series, previous, reasons,
+                ),
                 unsafe_allow_html=True,
             )
