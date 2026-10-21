@@ -1,174 +1,116 @@
+import sys
+import os
 import streamlit as st
 import pandas as pd
 
-# Importações originais do seu projeto SuperDash
-from data_loader import load_and_normalize_data
-from filters import render_sidebar_filters
-from kpis import calculate_executive_kpis
+# 1. Ajuste estrito de caminhos para solucionar o ModuleNotFoundError em qualquer servidor
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VIEW_DIR = os.path.join(BASE_DIR, "view")
+VIEWS_DIR = os.path.join(BASE_DIR, "views")
 
-# Importação dos módulos originais da pasta views
-from views.monitoramento import render_monitoramento
-from views.maquinas import render_maquinas
-from views.corretivas import render_corretivas
-from views.clientes_regioes import render_clientes_regioes
-from views.analise_tarefas import render_analise_tarefas
+for d in [BASE_DIR, VIEW_DIR, VIEWS_DIR]:
+    if os.path.exists(d) and d not in sys.path:
+        sys.path.insert(0, d)
 
-# 1. Configuração de página original
+# 2. Configuração de Página
 st.set_page_config(
-    page_title="SuperDash - Monitoramento de Refrigeração",
+    page_title="SuperDash - Monitoramento Executivo",
     page_icon="❄️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 2. CSS aplicado APENAS aos Cards e Cabeçalho do Topo (Primeira Parte)
-st.markdown("""
-    <style>
-        .exec-header-container {
-            background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
-            padding: 22px 28px;
-            border-radius: 14px;
-            color: #FFFFFF;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.12);
-        }
-        .exec-header-title {
-            font-size: 24px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            margin: 0;
-            color: #FFFFFF;
-        }
-        .exec-header-subtitle {
-            font-size: 13px;
-            color: #94A3B8;
-            margin-top: 4px;
-        }
-        
-        .kpi-card {
-            background: #FFFFFF;
-            border: 1px solid #E2E8F0;
-            border-radius: 12px;
-            padding: 16px 20px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03);
-            margin-bottom: 12px;
-        }
-        .kpi-border-primary { border-left: 5px solid #0284C7; }
-        .kpi-border-success { border-left: 5px solid #16A34A; }
-        .kpi-border-warning { border-left: 5px solid #F59E0B; }
-        .kpi-border-danger  { border-left: 5px solid #DC2626; }
-        
-        .kpi-label {
-            font-size: 11px;
-            font-weight: 700;
-            color: #64748B;
-            text-transform: uppercase;
-            letter-spacing: 0.6px;
-            margin-bottom: 4px;
-        }
-        .kpi-value {
-            font-size: 28px;
-            font-weight: 800;
-            color: #0F172A;
-            line-height: 1;
-        }
-        .kpi-footer {
-            font-size: 11px;
-            color: #64748B;
-            margin-top: 6px;
-        }
-    </style>
-""", unsafe_allow_html=True)
+# 3. Importação de Módulos Base e UI Executiva
+from data_loader import load_and_normalize_data
+from filters import render_sidebar_filters
+from kpis import calculate_executive_kpis
+import ui
 
-# 3. Carregamento dos dados originais
+ui.apply_executive_ui()
+
+# 4. Importação defensiva dos módulos das visões
+try:
+    import view.monitoramento as v_mon
+    import view.maquinas as v_maq
+    import view.corretivas as v_corr
+    import view.clientes_regioes as v_cli
+    import view.analise_tarefas as v_tar
+except ImportError:
+    try:
+        import views.monitoramento as v_mon
+        import views.maquinas as v_maq
+        import views.corretivas as v_corr
+        import views.clientes_regioes as v_cli
+        import views.analise_tarefas as v_tar
+    except ImportError:
+        v_mon = v_maq = v_corr = v_cli = v_tar = ui
+
+# 5. Carregamento dos dados brutos
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
-    st.error("⚠️ Não foi possível carregar os dados.")
+    st.error("⚠️ Não foi possível carregar os dados. Verifique a planilha.")
     st.stop()
 
-# 4. Filtros originais da barra lateral
+# 6. Processamento dos Filtros
 filter_output = render_sidebar_filters(df_raw)
 df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
 
-# --- PRIMEIRA PARTE: CABEÇALHO & CARDS EXECUTIVOS ---
-
-st.markdown("""
-    <div class="exec-header-container">
-        <div class="exec-header-title">❄️ SuperDash - Monitoramento & Inteligência de Refrigeração</div>
-        <div class="exec-header-subtitle">Painel Integrado de Gestão de Ativos, Manutenções e Cobertura de Garantias</div>
-    </div>
-""", unsafe_allow_html=True)
+# --- TOPO EXECUTIVO ---
+ui.render_executive_header(
+    title="❄️ SuperDash - Monitoramento Executivo de Refrigeração",
+    subtitle="Painel Integrado de Inteligência Operacional, Comparativos de Ativos e Cobertura de Garantias"
+)
 
 kpis = calculate_executive_kpis(df_filtered)
 
 c1, c2, c3, c4 = st.columns(4)
-
 with c1:
-    st.markdown(f"""
-        <div class="kpi-card kpi-border-primary">
-            <div class="kpi-label">Total de Atendimentos</div>
-            <div class="kpi-value">{kpis['total_chamados']:,}</div>
-            <div class="kpi-footer">📋 Registros no período</div>
-        </div>
-    """, unsafe_allow_html=True)
-
+    ui.render_kpi_card("Total de Atendimentos", f"{kpis['total_chamados']:,}", "📋 Registros no período", "primary")
 with c2:
-    st.markdown(f"""
-        <div class="kpi-card kpi-border-success">
-            <div class="kpi-label">Preventivas</div>
-            <div class="kpi-value">{kpis['preventivas']:,}</div>
-            <div class="kpi-footer">🟢 {kpis['pct_preventivas']:.1f}% de eficiência</div>
-        </div>
-    """, unsafe_allow_html=True)
-
+    ui.render_kpi_card("Preventivas", f"{kpis['preventivas']:,}", f"🟢 {kpis['pct_preventivas']:.1f}% de eficiência", "success")
 with c3:
-    st.markdown(f"""
-        <div class="kpi-card kpi-border-warning">
-            <div class="kpi-label">Corretivas</div>
-            <div class="kpi-value">{kpis['corretivas']:,}</div>
-            <div class="kpi-footer">🟠 Reparos e emergências</div>
-        </div>
-    """, unsafe_allow_html=True)
-
+    ui.render_kpi_card("Corretivas", f"{kpis['corretivas']:,}", "🟠 Reparos e emergências", "warning")
 with c4:
-    variant_gar = "kpi-border-success" if kpis['pct_garantia'] >= 30 else "kpi-border-danger"
-    st.markdown(f"""
-        <div class="kpi-card {variant_gar}">
-            <div class="kpi-label">Em Garantia</div>
-            <div class="kpi-value">{kpis['pct_garantia']:.1f}%</div>
-            <div class="kpi-footer">🛡️ {kpis['garantia_qtd']} ativo(s) cobertos</div>
-        </div>
-    """, unsafe_allow_html=True)
+    var_gar = "success" if kpis['pct_garantia'] >= 30 else "danger"
+    ui.render_kpi_card("Em Garantia", f"{kpis['pct_garantia']:.1f}%", f"🛡️ {kpis['garantia_qtd']} ativo(s) cobertos", var_gar)
 
 st.write("")
 
-# --- SEGUNDA PARTE: NAVEGAÇÃO E RECURSOS ORIGINAIS DO SUPERDASH ---
+# Helper para executar o render das telas com total resiliência
+def execute_view(mod, fallback_func, df):
+    for func_name in ["render_monitoramento", "render_maquinas", "render_corretivas", "render_clientes_regioes", "render_analise_tarefas", "render", "main"]:
+        if hasattr(mod, func_name):
+            getattr(mod, func_name)(df)
+            return
+    # Caso o módulo não tenha função direta, executa a versão aprimorada do ui
+    fallback_func(df)
 
-tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
+# --- NAVEGAÇÃO EXECUTIVA POR ABAS FLUIDAS ---
+t1, t2, t3, t4, t5, t6 = st.tabs([
     "📊 Monitoramento Geral", 
     "⚙️ Máquinas & Comparativos", 
     "🚨 Manutenções Corretivas", 
     "🏢 Clientes & Regiões", 
     "📝 Análise de Tarefas",
-    "📋 Tabela Operacional"
+    "📋 Base de Dados Operacional"
 ])
 
-with tab_mon:
-    render_monitoramento(df_filtered)
+with t1:
+    execute_view(v_mon, ui.render_monitoramento, df_filtered)
 
-with tab_maq:
-    render_maquinas(df_filtered)
+with t2:
+    execute_view(v_maq, ui.render_maquinas, df_filtered)
 
-with tab_corr:
-    render_corretivas(df_filtered)
+with t3:
+    execute_view(v_corr, ui.render_corretivas, df_filtered)
 
-with tab_cli:
-    render_clientes_regioes(df_filtered)
+with t4:
+    execute_view(v_cli, ui.render_clientes_regioes, df_filtered)
 
-with tab_taref:
-    render_analise_tarefas(df_filtered)
+with t5:
+    execute_view(v_tar, ui.render_analise_tarefas, df_filtered)
 
-with tab_raw:
-    st.subheader("Base Operacional Completa")
+with t6:
+    st.subheader("Base de Dados Operacional Completa")
     st.dataframe(df_filtered, use_container_width=True, hide_index=True)
