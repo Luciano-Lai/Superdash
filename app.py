@@ -1,9 +1,10 @@
 import sys
 import os
+import importlib
 import streamlit as st
 import pandas as pd
 
-# 1. Ajuste de caminhos para a pasta 'view'
+# 1. Ajuste e priorização estrita de caminhos no sys.path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIEW_DIR = os.path.join(BASE_DIR, "view")
 VIEWS_DIR = os.path.join(BASE_DIR, "views")
@@ -12,7 +13,7 @@ for d in [BASE_DIR, VIEW_DIR, VIEWS_DIR]:
     if os.path.exists(d) and d not in sys.path:
         sys.path.insert(0, d)
 
-# 2. Configuração de Página
+# 2. Configuração de Página Executiva
 st.set_page_config(
     page_title="SuperDash - Monitoramento Executivo",
     page_icon="❄️",
@@ -20,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 3. Importação de Módulos Base e UI Executiva
+# 3. Importação do UI e Módulos Base da Raiz
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
@@ -28,33 +29,36 @@ import ui
 
 ui.apply_executive_ui()
 
-# 4. Importação defensiva dos módulos das visões
-try:
-    import view.monitoramento as v_mon
-    import view.maquinas as v_maq
-    import view.corretivas as v_corr
-    import view.clientes_regioes as v_cli
-    import view.analise_tarefas as v_tar
-except ImportError:
-    try:
-        import views.monitoramento as v_mon
-        import views.maquinas as v_maq
-        import views.corretivas as v_corr
-        import views.clientes_regioes as v_cli
-        import views.analise_tarefas as v_tar
-    except ImportError:
-        v_mon = v_maq = v_corr = v_cli = v_tar = ui
-
-# 5. Carregamento dos dados brutos
+# 4. Carregamento dos Dados Brutos
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
-    st.error("⚠️ Não foi possível carregar os dados. Verifique a planilha.")
+    st.error("⚠️ Não foi possível carregar os dados da planilha.")
     st.stop()
 
-# 6. Processamento dos Filtros
+# 5. Processamento dos Filtros
 filter_output = render_sidebar_filters(df_raw)
 df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
+
+# 6. Carregamento Seguro dos Módulos da pasta view/views sem estourar o erro de execução no import
+def safe_import_module(module_name):
+    """Tenta carregar o módulo ignorando chamadas automáticas prévias sem parâmetros."""
+    try:
+        return importlib.import_module(f"view.{module_name}")
+    except Exception:
+        try:
+            return importlib.import_module(f"views.{module_name}")
+        except Exception:
+            try:
+                return importlib.import_module(module_name)
+            except Exception:
+                return None
+
+v_mon = safe_import_module("monitoramento")
+v_maq = safe_import_module("maquinas")
+v_corr = safe_import_module("corretivas")
+v_cli = safe_import_module("clientes_regioes")
+v_tar = safe_import_module("analise_tarefas")
 
 # --- TOPO EXECUTIVO ---
 ui.render_executive_header(
@@ -77,12 +81,22 @@ with c4:
 
 st.write("")
 
-# Helper para executar o render das telas com total resiliência
-def execute_view(mod, fallback_func, df):
-    for func_name in ["render_monitoramento", "render_maquinas", "render_corretivas", "render_clientes_regioes", "render_analise_tarefas", "render", "main"]:
-        if hasattr(mod, func_name):
-            getattr(mod, func_name)(df)
-            return
+# Helper para invocar a renderização das telas fornecendo o df_filtered
+def execute_view_render(mod, fallback_func, df):
+    if mod is not None:
+        for func_name in ["render_monitoramento", "render_maquinas", "render_corretivas", "render_clientes_regioes", "render_analise_tarefas", "render", "main"]:
+            if hasattr(mod, func_name):
+                func = getattr(mod, func_name)
+                try:
+                    func(df)
+                    return
+                except TypeError:
+                    try:
+                        func()
+                        return
+                    except Exception:
+                        pass
+    # Se o módulo original falhar na chamada direta, executa a versão aprimorada da UI
     fallback_func(df)
 
 # --- NAVEGAÇÃO EXECUTIVA POR ABAS FLUIDAS ---
@@ -96,19 +110,19 @@ t1, t2, t3, t4, t5, t6 = st.tabs([
 ])
 
 with t1:
-    execute_view(v_mon, ui.render_monitoramento, df_filtered)
+    execute_view_render(v_mon, ui.render_monitoramento, df_filtered)
 
 with t2:
-    execute_view(v_maq, ui.render_maquinas, df_filtered)
+    execute_view_render(v_maq, ui.render_maquinas, df_filtered)
 
 with t3:
-    execute_view(v_corr, ui.render_corretivas, df_filtered)
+    execute_view_render(v_corr, ui.render_corretivas, df_filtered)
 
 with t4:
-    execute_view(v_cli, ui.render_clientes_regioes, df_filtered)
+    execute_view_render(v_cli, ui.render_clientes_regioes, df_filtered)
 
 with t5:
-    execute_view(v_tar, ui.render_analise_tarefas, df_filtered)
+    execute_view_render(v_tar, ui.render_analise_tarefas, df_filtered)
 
 with t6:
     st.subheader("Base de Dados Operacional Completa")
