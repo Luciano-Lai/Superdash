@@ -8,31 +8,60 @@ from data_loader import clean, norm
 
 INVALID = {"", "nenhuma", "nenhum", "nao informado", "nan", "none", "<na>"}
 
-TOOLTIPS = {
-    "Corretivas em garantia": (
-        "Situação atual da data limite. Não representa a cobertura "
-        "histórica da chamada."
-    ),
-    "Corretivas fora da garantia": (
-        "Situação atual da data limite. Não representa a cobertura "
-        "histórica da chamada."
-    ),
-    "Problema mais frequente": (
-        "Considera apenas corretivas com problema válido."
-    ),
-    "Peça mais trocada": (
-        "Considera apenas corretivas com peça válida."
-    ),
-    "% Preventivas": "Proporção de preventivas no total do recorte.",
-    "% Corretivas": "Proporção de corretivas no total do recorte.",
-}
-
-NEGATIVE_IS_BAD = {
+KPI_BAD_WHEN_UP = {
     "Corretivas",
     "% Corretivas",
     "Corretivas em garantia",
     "Corretivas fora da garantia",
 }
+
+KPI_GOOD_WHEN_UP = {
+    "Preventivas",
+    "% Preventivas",
+}
+
+TOOLTIPS = {
+    "Total de tarefas": "Todas as tarefas do recorte atual.",
+    "Preventivas": "Tarefas com Tipo = Preventiva.",
+    "Corretivas": "Tarefas com Tipo = Corretiva.",
+    "% Preventivas": "Proporção de preventivas no total do recorte.",
+    "% Corretivas": "Proporção de corretivas no total do recorte.",
+    "Máquinas atendidas": "Máquinas distintas com pelo menos uma tarefa.",
+    "Técnicos envolvidos": "Técnicos distintos com pelo menos uma tarefa.",
+    "Corretivas em garantia":
+        "Situação atual da data limite. Não representa a cobertura "
+        "histórica da chamada.",
+    "Corretivas fora da garantia":
+        "Situação atual da data limite. Não representa a cobertura "
+        "histórica da chamada.",
+    "Problema mais frequente":
+        "Considera apenas corretivas com problema válido.",
+    "Peça mais trocada":
+        "Considera apenas corretivas com peça válida.",
+}
+
+KPI_ICONS = {
+    "Total de tarefas": "📋",
+    "Preventivas": "🛡️",
+    "Corretivas": "🔧",
+    "% Preventivas": "📊",
+    "% Corretivas": "📊",
+    "Máquinas atendidas": "❄️",
+    "Técnicos envolvidos": "👥",
+    "Corretivas em garantia": "✅",
+    "Corretivas fora da garantia": "⚠️",
+    "Problema mais frequente": "⚡",
+    "Peça mais trocada": "⚙️",
+}
+
+NUMERIC_KPIS = {
+    "Total de tarefas", "Preventivas", "Corretivas",
+    "Máquinas atendidas", "Técnicos envolvidos",
+    "Corretivas em garantia", "Corretivas fora da garantia",
+}
+
+PERCENT_KPIS = {"% Preventivas", "% Corretivas"}
+TEXT_KPIS = {"Problema mais frequente", "Peça mais trocada"}
 
 
 def occurrence_frame(df, column):
@@ -63,8 +92,7 @@ def calculate_kpis(df):
         ),
         "% Corretivas": (
             f"{len(corr) / total * 100:.1f}%".replace(".", ",")
-            if total
-            else "—"
+            if total else "—"
         ),
         "Máquinas atendidas": df.loc[df["Máquina"].ne(""), "Máquina"].nunique(),
         "Técnicos envolvidos": df.loc[df["Técnico"].ne(""), "Técnico"].nunique(),
@@ -78,9 +106,11 @@ def calculate_kpis(df):
 def calculate_kpis_with_delta(df, previous_df=None):
     current = calculate_kpis(df)
     if previous_df is None or previous_df.empty:
-        return current, {}
+        return current, {}, {}
+
     previous = calculate_kpis(previous_df)
     deltas = {}
+
     for name, value in current.items():
         pv = previous.get(name)
         if (
@@ -91,61 +121,219 @@ def calculate_kpis_with_delta(df, previous_df=None):
             and pv > 0
         ):
             deltas[name] = (value - pv) / pv * 100
-    return current, deltas
+
+    return current, deltas, previous
 
 
-def render_kpi_cards(selected_kpis, values, deltas=None):
+def compute_kpi_series(raw, effective_spec, buckets=6):
+    """
+    Calcula cada KPI em `buckets` janelas consecutivas anteriores
+    + período atual. Usado para desenhar os sparklines.
+    """
+    from filters import apply_filters
+
+    period = effective_spec.get("period")
+    if not (isinstance(period, (tuple, list)) and len(period) == 2):
+        return {}
+
+    try:
+        start, end = map(pd.Timestamp, period)
+    except Exception:
+        return {}
+
+    duration = (end - start).days + 1
+    if duration <= 0:
+        return {}
+
+    series = {}
+
+    for i in range(buckets, 0, -1):
+        b_end = start - pd.Timedelta(days=(i - 1) * duration)
+        b_start = b_end - pd.Timedelta(days=duration - 1)
+        b_spec = {
+            **effective_spec,
+            "period": (b_start.date(), b_end.date()),
+        }
+        b_df = apply_filters(raw, b_spec)
+        b_kpis = calculate_kpis(b_df)
+        for name, value in b_kpis.items():
+            series.setdefault(name, []).append(value)
+
+    cur_df = apply_filters(raw, effective_spec)
+    cur_kpis = calculate_kpis(cur_df)
+    for name, value in cur_kpis.items():
+        series.setdefault(name, []).append(value)
+
+    return series
+
+
+def _sparkline_svg(values, color="#0284C7", height=28):
+    numeric = [
+        float(v) for v in values
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    ]
+    if len(numeric) < 3:
+        return ""
+
+    n = len(numeric)
+    min_v, max_v = min(numeric), max(numeric)
+    if max_v == min_v:
+        max_v = min_v + 1
+
+    w, h = 100, height
+    points = []
+    for i, v in enumerate(numeric):
+        x = (i / (n - 1)) * w
+        y = h - ((v - min_v) / (max_v - min_v)) * (h - 6) - 3
+        points.append(f"{x:.1f},{y:.1f}")
+
+    poly = " ".join(points)
+    area = f"0,{h} {poly} {w},{h}"
+
+    return (
+        f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
+        f'style="width:100%;height:{h}px;display:block">'
+        f'<polygon points="{area}" fill="{color}" fill-opacity="0.12"/>'
+        f'<polyline points="{poly}" fill="none" stroke="{color}" '
+        f'stroke-width="1.8" vector-effect="non-scaling-stroke" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'</svg>'
+    )
+
+
+def _border_and_delta_class(name, delta):
+    if delta is None:
+        return "kpi-border-primary", None
+
+    if name in KPI_BAD_WHEN_UP:
+        if delta > 0:
+            return "kpi-border-danger", "kpi-delta-bad"
+        if delta < 0:
+            return "kpi-border-success", "kpi-delta-good"
+        return "kpi-border-neutral", "kpi-delta-flat"
+
+    if name in KPI_GOOD_WHEN_UP:
+        if delta > 0:
+            return "kpi-border-success", "kpi-delta-good"
+        if delta < 0:
+            return "kpi-border-danger", "kpi-delta-bad"
+        return "kpi-border-neutral", "kpi-delta-flat"
+
+    return "kpi-border-primary", "kpi-delta-flat"
+
+
+def _parse_percent(value):
+    if not isinstance(value, str) or not value.endswith("%"):
+        return None
+    try:
+        return float(value.replace("%", "").replace(",", ".").strip())
+    except ValueError:
+        return None
+
+
+def build_kpi_card(name, values, deltas, series, previous):
+    value = values.get(name, "—")
+    delta = deltas.get(name)
+    prev_val = previous.get(name)
+
+    border, delta_class = _border_and_delta_class(name, delta)
+
+    if name in TEXT_KPIS:
+        val_class = "kpi-value-text"
+        display = str(value) if str(value).strip() else "—"
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        val_class = "kpi-value"
+        display = f"{int(value):,}".replace(",", ".")
+    else:
+        val_class = "kpi-value"
+        display = str(value)
+
+    delta_html = ""
+    if delta is not None and name not in TEXT_KPIS:
+        arrow = "▲" if delta > 0 else "▼" if delta < 0 else "≡"
+        d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
+        delta_html = (
+            f'<span class="kpi-delta {delta_class}">'
+            f'{arrow} {d_fmt}</span>'
+        )
+
+    viz_html = ""
+
+    if name in PERCENT_KPIS:
+        pct = _parse_percent(value)
+        if pct is not None:
+            width = max(0, min(100, pct))
+            if name == "% Corretivas":
+                color = (
+                    "#DC2626" if pct > 40
+                    else "#F59E0B" if pct > 25
+                    else "#16A34A"
+                )
+            else:
+                color = (
+                    "#16A34A" if pct >= 60
+                    else "#F59E0B" if pct >= 30
+                    else "#DC2626"
+                )
+            viz_html = (
+                f'<div class="kpi-progress">'
+                f'<div class="kpi-progress-fill" '
+                f'style="width:{width}%;background:{color}"></div>'
+                f'</div>'
+            )
+    elif name in NUMERIC_KPIS and name in series:
+        svg = _sparkline_svg(
+            series[name],
+            color=(
+                "#DC2626" if border == "kpi-border-danger"
+                else "#16A34A" if border == "kpi-border-success"
+                else "#0284C7"
+            ),
+        )
+        if svg:
+            viz_html = f'<div class="kpi-sparkline">{svg}</div>'
+
+    footer = ""
+    if name not in TEXT_KPIS and isinstance(prev_val, (int, float)):
+        prev_disp = f"{int(prev_val):,}".replace(",", ".")
+        footer = f"vs {prev_disp} no período anterior"
+    elif name in TEXT_KPIS and str(value).strip() not in {"—", ""}:
+        footer = "no recorte atual"
+
+    icon = KPI_ICONS.get(name, "")
+    help_text = TOOLTIPS.get(name, "")
+    help_html = (
+        f'<span class="kpi-help" '
+        f'title="{escape(help_text, quote=True)}">?</span>'
+        if help_text else ""
+    )
+
+    return (
+        f'<div class="kpi-card {border}">'
+        f'<div class="kpi-header">'
+        f'<span class="kpi-label">{icon} {escape(name)}</span>'
+        f'{help_html}'
+        f'</div>'
+        f'<div class="kpi-value-row">'
+        f'<span class="{val_class}">{escape(display)}</span>'
+        f'{delta_html}'
+        f'</div>'
+        f'{viz_html}'
+        f'<div class="kpi-footer">{escape(footer)}</div>'
+        f'</div>'
+    )
+
+
+def render_kpi_cards(selected_kpis, values, deltas=None, series=None, previous=None):
     deltas = deltas or {}
+    series = series or {}
+    previous = previous or {}
+
     for start in range(0, len(selected_kpis), 4):
         group = selected_kpis[start:start + 4]
         columns = st.columns(4)
         for col, name in zip(columns, group):
-            value = values.get(name, "—")
-            is_text = name in {"Problema mais frequente", "Peça mais trocada"}
-            display = (
-                f"{int(value):,}".replace(",", ".")
-                if isinstance(value, (int, float))
-                else str(value)
+            col.markdown(
+                build_kpi_card(name, values, deltas, series, previous),
+                unsafe_allow_html=True,
             )
-            size = "1rem" if is_text else "2rem"
-            help_text = TOOLTIPS.get(name, "")
-            help_attr = (
-                f' title="{escape(help_text, quote=True)}"'
-                if help_text
-                else ""
-            )
-            marker = " ⓘ" if help_text else ""
-
-            delta_html = ""
-            if name in deltas and not is_text:
-                d = deltas[name]
-                arrow = "▲" if d > 0 else "▼" if d < 0 else "＝"
-                if name in NEGATIVE_IS_BAD:
-                    color = (
-                        "#C0392B" if d > 0
-                        else "#31889A" if d < 0
-                        else "#6B7B8E"
-                    )
-                else:
-                    color = (
-                        "#31889A" if d > 0
-                        else "#C0392B" if d < 0
-                        else "#6B7B8E"
-                    )
-                d_fmt = f"{abs(d):.1f}".replace(".", ",")
-                delta_html = (
-                    f'<div style="font-size:.78rem;color:{color};'
-                    f'margin-top:4px">'
-                    f'{arrow} {d_fmt}% vs período anterior</div>'
-                )
-
-            html = (
-                f'<div class="kpi-card">'
-                f'<div class="kpi-label"{help_attr}>'
-                f'{escape(name)}{marker}</div>'
-                f'<div class="kpi-value" style="font-size:{size}">'
-                f'{escape(display)}</div>'
-                f'{delta_html}'
-                f'</div>'
-            )
-            col.markdown(html, unsafe_allow_html=True)
