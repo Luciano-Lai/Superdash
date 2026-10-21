@@ -1,3 +1,6 @@
+import streamlit as st
+
 from ui import render_monitoramento
-st.markdown('<div style="height:8px;background:linear-gradient(90deg,red,blue)"></div>', unsafe_allow_html=True)
+
+st.write("TESTE_123")
 render_monitoramento()
