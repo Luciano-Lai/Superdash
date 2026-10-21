@@ -1,32 +1,50 @@
 import sys
 import os
+import importlib.util
 import streamlit as st
 import pandas as pd
 
-# Adiciona o diretório raiz ao sys.path para garantir importação segura dos módulos na pasta view
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 1. Ajuste dinâmico de caminhos do Python para encontrar a pasta 'view' e módulos raiz
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+VIEW_DIR = os.path.join(BASE_DIR, "view")
+if os.path.exists(VIEW_DIR) and VIEW_DIR not in sys.path:
+    sys.path.insert(0, VIEW_DIR)
 
 # Importações dos módulos nativos do SuperDash
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
 
-# Importação defensiva dos módulos de visualização
-try:
-    import view.monitoramento as v_mon
-    import view.maquinas as v_maq
-    import view.corretivas as v_corr
-    import view.clientes_regioes as v_cli
-    import view.analise_tarefas as v_tar
-except ModuleNotFoundError:
-    # Caso a pasta 'view' não seja reconhecida como pacote, importa diretamente pelos arquivos
-    from view import monitoramento as v_mon
-    from view import maquinas as v_maq
-    from view import corretivas as v_corr
-    from view import clientes_regioes as v_cli
-    from view import analise_tarefas as v_tar
+# Função de carregamento dinâmico e seguro para os arquivos da pasta view
+def load_view_module(module_name):
+    try:
+        # Tenta importar como pacote
+        return importlib.import_module(f"view.{module_name}")
+    except (ModuleNotFoundError, ImportError):
+        try:
+            # Tenta importar diretamente da raiz/sys.path
+            return importlib.import_module(module_name)
+        except (ModuleNotFoundError, ImportError):
+            # Tenta carregar explicitamente pelo caminho do arquivo no disco
+            file_path = os.path.join(VIEW_DIR, f"{module_name}.py")
+            if os.path.exists(file_path):
+                spec = importlib.util.spec_from_file_location(module_name, file_path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                return mod
+            return None
 
-# 1. Configuração da página executiva
+# Carregamento resiliente de cada visão
+v_mon = load_view_module("monitoramento")
+v_maq = load_view_module("maquinas")
+v_corr = load_view_module("corretivas")
+v_cli = load_view_module("clientes_regioes")
+v_tar = load_view_module("analise_tarefas")
+
+# 2. Configuração da página executiva
 st.set_page_config(
     page_title="SuperDash - Monitoramento de Refrigeração",
     page_icon="❄️",
@@ -34,12 +52,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Injeção de Estilo Executivo
+# 3. Estilização Executiva (Header & KPI Cards)
 st.markdown("""
     <style>
         .main { background-color: #F8FAFC; }
         
-        /* Cabeçalho Executivo em Tom Navy */
         .exec-header-container {
             background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
             padding: 22px 28px;
@@ -61,7 +78,6 @@ st.markdown("""
             margin-top: 4px;
         }
         
-        /* Cards KPI Executivos */
         .kpi-card {
             background: #FFFFFF;
             border: 1px solid #E2E8F0;
@@ -95,7 +111,6 @@ st.markdown("""
             margin-top: 6px;
         }
 
-        /* Estilização fluida das Abas Principais */
         .stTabs [data-baseweb="tab-list"] {
             gap: 6px;
             background-color: #E2E8F0;
@@ -111,14 +126,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Carregamento dos dados brutos
+# 4. Carregamento e filtros de dados
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
     st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com a planilha.")
     st.stop()
 
-# 4. Processamento de Filtros na Barra Lateral
 filter_output = render_sidebar_filters(df_raw)
 df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
 
@@ -173,16 +187,18 @@ with c4:
 
 st.write("")
 
-# --- Helper para execução segura das visões ---
-def safe_render(module, default_func_names, df):
-    """Procura e executa a função principal do módulo da aba sem estourar exceção"""
-    for func_name in default_func_names:
+# Helper seguro para execução das telas
+def safe_render(module, df):
+    if module is None:
+        st.warning("Módulo da aba não encontrado no projeto.")
+        return
+    for func_name in ["render_monitoramento", "render_maquinas", "render_corretivas", "render_clientes_regioes", "render_analise_tarefas", "render", "main"]:
         if hasattr(module, func_name):
             getattr(module, func_name)(df)
             return
-    st.info("Visão em carregamento ou sem função pública padrão detectada.")
+    st.info("Visão sem função pública de renderização encontrada.")
 
-# --- NAVEGAÇÃO FLUIDA COM TODAS AS VISÕES ORIGINAIS ---
+# --- NAVEGAÇÃO POR ABAS COM TODAS AS FUNCIONALIDADES PRESERVADAS ---
 tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
     "📊 Monitoramento Geral", 
     "⚙️ Máquinas & Comparativos", 
@@ -193,19 +209,19 @@ tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
 ])
 
 with tab_mon:
-    safe_render(v_mon, ["render_monitoramento", "render", "main"], df_filtered)
+    safe_render(v_mon, df_filtered)
 
 with tab_maq:
-    safe_render(v_maq, ["render_maquinas", "render", "main"], df_filtered)
+    safe_render(v_maq, df_filtered)
 
 with tab_corr:
-    safe_render(v_corr, ["render_corretivas", "render", "main"], df_filtered)
+    safe_render(v_corr, df_filtered)
 
 with tab_cli:
-    safe_render(v_cli, ["render_clientes_regioes", "render", "main"], df_filtered)
+    safe_render(v_cli, df_filtered)
 
 with tab_taref:
-    safe_render(v_tar, ["render_analise_tarefas", "render", "main"], df_filtered)
+    safe_render(v_tar, df_filtered)
 
 with tab_raw:
     st.subheader("Base Operacional Completa")
