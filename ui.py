@@ -47,7 +47,7 @@ EXECUTIVE_PRESETS = {
         "charts": [
             "Evolução da operação",
             "Composição das manutenções",
-            "Equipamentos com mais corretivas",
+            "Máquinas por classe ABC",
         ],
     },
     "corretivas": {
@@ -59,8 +59,8 @@ EXECUTIVE_PRESETS = {
         ],
         "charts": [
             "Falhas relatadas",
+            "Falhas por classe ABC",
             "Peças utilizadas",
-            "Equipamentos envolvidos",
             "Evolução das corretivas",
         ],
     },
@@ -73,7 +73,7 @@ EXECUTIVE_PRESETS = {
         "charts": [
             "Ritmo dos atendimentos",
             "Distribuição por responsável",
-            "Distribuição por equipamento",
+            "Concentração de tarefas por equipamento",
         ],
     },
     "maquinas": {
@@ -1026,6 +1026,7 @@ def render_monitoramento():
             "Evolução da operação",
             "Composição das manutenções",
             "Equipamentos com mais corretivas",
+            "Máquinas por classe ABC",
             "Recorte × universo",
         ],
     )
@@ -1039,6 +1040,14 @@ def render_monitoramento():
             "Equipamentos com mais corretivas",
             {"Corretivas", "Máquinas atendidas"},
             "Corretiva",
+        )
+    if "Máquinas por classe ABC" in c["selected"]:
+        concentration(
+            c, "Rótulo da máquina",
+            "Máquinas por classe ABC — corretivas",
+            {"Corretivas", "Máquinas atendidas"},
+            "Corretiva",
+            ["Técnico", "Problema", "Tarefa"],
         )
     if "Recorte × universo" in c["selected"]:
         participation(c)
@@ -1121,7 +1130,9 @@ def render_corretivas():
         ],
         [
             "Falhas relatadas",
+            "Falhas por classe ABC",
             "Peças utilizadas",
+            "Peças por classe ABC",
             "Serviços corretivos",
             "Equipamentos envolvidos",
             "Evolução das corretivas",
@@ -1132,10 +1143,26 @@ def render_corretivas():
             c, "Problema", "Falhas relatadas",
             {"Corretivas", "Problema mais frequente"},
         )
+    if "Falhas por classe ABC" in c["selected"]:
+        concentration(
+            c, "Problema",
+            "Falhas por classe ABC — corretivas",
+            {"Corretivas", "Problema mais frequente"},
+            "Corretiva",
+            ["Rótulo da máquina", "Técnico", "Tarefa"],
+        )
     if "Peças utilizadas" in c["selected"]:
         ranking(
             c, "Peça", "Peças utilizadas",
             {"Corretivas", "Peça mais trocada"},
+        )
+    if "Peças por classe ABC" in c["selected"]:
+        concentration(
+            c, "Peça",
+            "Peças por classe ABC — corretivas",
+            {"Corretivas", "Peça mais trocada"},
+            "Corretiva",
+            ["Rótulo da máquina", "Problema", "Técnico"],
         )
     if "Serviços corretivos" in c["selected"]:
         ranking(c, "Tarefa", "Serviços corretivos", {"Corretivas"})
