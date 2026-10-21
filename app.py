@@ -2,23 +2,22 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Importações dos módulos nativos do SuperDash
+# Importações dos módulos do SuperDash
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
 
-# 1. Configuração da página
+# 1. Configuração da página e estilo executivo
 st.set_page_config(
-    page_title="Painel Executivo de Manutenção",
+    page_title="Painel Executivo & Analítico de Manutenção",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 2. Injeção de CSS para o Cabeçalho e Cards Executivos do Topo
+# 2. CSS Executivo para Cabeçalho, Cards e Abas
 st.markdown("""
     <style>
-        /* Cabeçalho Executivo em tom Navy */
         .exec-header-container {
             background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
             padding: 24px 32px;
@@ -40,7 +39,6 @@ st.markdown("""
             margin-top: 4px;
         }
         
-        /* Cards Executivos com Bordas e Sombras */
         .kpi-card {
             background: #FFFFFF;
             border: 1px solid #E2E8F0;
@@ -74,7 +72,6 @@ st.markdown("""
             margin-top: 8px;
         }
 
-        /* Abas Estilizadas */
         .stTabs [data-baseweb="tab-list"] {
             gap: 8px;
             background-color: #F1F5F9;
@@ -89,35 +86,27 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Carregamento dos dados
+# 3. Carregamento e Filtros
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
-    st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com o Google Sheets.")
+    st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com a planilha.")
     st.stop()
 
-# 4. TRATAMENTO SEGURO DO RETORNO DE FILTROS (EVITA VALUEERROR)
 filter_output = render_sidebar_filters(df_raw)
+df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
 
-if isinstance(filter_output, tuple):
-    df_filtered = filter_output[0]
-else:
-    df_filtered = filter_output
-
-# --- PRIMEIRA PARTE: CABEÇALHO E CARDS EXECUTIVOS ---
-
+# --- TOPO: CABEÇALHO E CARDS DE KPI ---
 st.markdown("""
     <div class="exec-header-container">
         <div class="exec-header-title">🏢 Executive Operations Dashboard</div>
-        <div class="exec-header-subtitle">Visão consolidada do parque de refrigeração, eficiência de manutenção e cobertura de garantias</div>
+        <div class="exec-header-subtitle">Inteligência de manutenção, análises comparativas e gestão de ativos</div>
     </div>
 """, unsafe_allow_html=True)
 
-# Cálculo dos KPIs Globais
 kpis = calculate_executive_kpis(df_filtered)
 
 c1, c2, c3, c4 = st.columns(4)
-
 with c1:
     st.markdown(f"""
         <div class="kpi-card kpi-border-primary">
@@ -141,7 +130,7 @@ with c3:
         <div class="kpi-card kpi-border-warning">
             <div class="kpi-label">Atendimentos Corretivos</div>
             <div class="kpi-value">{kpis['corretivas']:,}</div>
-            <div class="kpi-footer">🟠 Intervenções imediatas</div>
+            <div class="kpi-footer">🟠 Intervenções de reparo</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -157,19 +146,20 @@ with c4:
 
 st.write("")
 
-# --- SEGUNDA PARTE: RESTANTE DO APLICATIVO ORGANIZADO POR ABAS ---
-
-tab1, tab2, tab3 = st.tabs([
-    "📈 Visão Estratégica & Performance", 
-    "🛠️ Análise Técnica de Ativos", 
-    "📑 Relatório Operacional & Exportação"
+# --- ESTRUTURA DE ABAS PARA ANÁLISES E COMPARATIVOS ---
+tab_macro, tab_comparativo, tab_tecnica, tab_relatorio = st.tabs([
+    "📈 Visão Estratégica & Gráficos", 
+    "⚔️ Comparativo de Máquinas", 
+    "🛠️ Performance de Técnicos & Garantias", 
+    "📋 Base Operacional Completa"
 ])
 
-with tab1:
+# --- ABA 1: VISÃO ESTRATÉGICA E GRÁFICOS ---
+with tab_macro:
     col_chart1, col_chart2 = st.columns(2)
     
     with col_chart1:
-        st.subheader("Proporção: Preventivas vs. Corretivas")
+        st.subheader("Distribuição por Tipo de Manutenção")
         if "Tipo" in df_filtered.columns and not df_filtered.empty:
             df_tipo = df_filtered["Tipo"].value_counts().reset_index()
             df_tipo.columns = ["Tipo", "Quantidade"]
@@ -177,14 +167,14 @@ with tab1:
                 df_tipo, 
                 names="Tipo", 
                 values="Quantidade", 
-                hole=0.4,
+                hole=0.45,
                 color_discrete_sequence=["#0284C7", "#F59E0B", "#16A34A", "#DC2626"]
             )
             fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=340)
             st.plotly_chart(fig_pie, use_container_width=True)
 
     with col_chart2:
-        st.subheader("Top 5 Problemas Relatados")
+        st.subheader("Top 5 Falhas / Problemas Recorrentes")
         if "Problema" in df_filtered.columns and not df_filtered.empty:
             df_prob = df_filtered["Problema"].value_counts().head(5).reset_index()
             df_prob.columns = ["Problema", "Quantidade"]
@@ -193,12 +183,99 @@ with tab1:
                 x="Quantidade", 
                 y="Problema", 
                 orientation="h",
-                color_discrete_sequence=["#0284C7"]
+                color="Quantidade",
+                color_continuous_scale="Blues"
             )
             fig_bar.update_layout(yaxis=dict(autorange="reversed"), margin=dict(t=20, b=20, l=20, r=20), height=340)
             st.plotly_chart(fig_bar, use_container_width=True)
 
-with tab2:
+    st.markdown("---")
+    
+    # Evolução Temporal dos Atendimentos
+    st.subheader("Evolução de Atendimentos ao Longo do Tempo")
+    if "Data da tarefa" in df_filtered.columns and not df_filtered.empty:
+        df_temp = df_filtered.dropna(subset=["Data da tarefa"]).copy()
+        if not df_temp.empty:
+            df_temp["Mês/Ano"] = df_temp["Data da tarefa"].dt.to_period("M").astype(str)
+            df_trend = df_temp.groupby(["Mês/Ano", "Tipo"]).size().reset_index(name="Atendimentos")
+            fig_trend = px.line(
+                df_trend, 
+                x="Mês/Ano", 
+                y="Atendimentos", 
+                color="Tipo",
+                markers=True,
+                color_discrete_map={"Preventiva": "#16A34A", "Corretiva": "#F59E0B"}
+            )
+            fig_trend.update_layout(height=350, margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+# --- ABA 2: COMPARATIVO DE MÁQUINAS ---
+with tab_comparativo:
+    st.subheader("⚔️ Análise Comparativa de Equipamentos (Máquinas)")
+    st.caption("Selecione duas ou mais máquinas para comparar o histórico operacional e incidência de corretivas.")
+
+    if "Máquina" in df_filtered.columns and not df_filtered.empty:
+        maquinas_disponiveis = sorted([m for m in df_filtered["Máquina"].dropna().unique() if m != "Não especificado"])
+        
+        selected_maquinas = st.multiselect(
+            "Selecione as máquinas para comparação:",
+            options=maquinas_disponiveis,
+            default=maquinas_disponiveis[:2] if len(maquinas_disponiveis) >= 2 else maquinas_disponiveis
+        )
+
+        if selected_maquinas:
+            df_comp = df_filtered[df_filtered["Máquina"].isin(selected_maquinas)]
+            
+            # Gráfico Comparativo 1: Volume por Tipo de Manutenção
+            col_comp1, col_comp2 = st.columns(2)
+            
+            with col_comp1:
+                st.markdown("**Atendimentos por Máquina e Tipo**")
+                df_comp_tipo = df_comp.groupby(["Máquina", "Tipo"]).size().reset_index(name="Quantidade")
+                fig_comp_bar = px.bar(
+                    df_comp_tipo, 
+                    x="Máquina", 
+                    y="Quantidade", 
+                    color="Tipo",
+                    barmode="group",
+                    color_discrete_sequence=["#0284C7", "#F59E0B", "#16A34A"]
+                )
+                fig_comp_bar.update_layout(height=340)
+                st.plotly_chart(fig_comp_bar, use_container_width=True)
+
+            with col_comp2:
+                st.markdown("**Distribuição de Falhas nas Máquinas Selecionadas**")
+                df_comp_prob = df_comp.groupby(["Máquina", "Problema"]).size().reset_index(name="Quantidade")
+                fig_comp_prob = px.bar(
+                    df_comp_prob, 
+                    x="Quantidade", 
+                    y="Máquina", 
+                    color="Problema",
+                    orientation="h"
+                )
+                fig_comp_prob.update_layout(height=340)
+                st.plotly_chart(fig_comp_prob, use_container_width=True)
+
+            # Tabela Resumo Lado a Lado
+            st.markdown("**Resumo Executivo do Comparativo**")
+            resumo_list = []
+            for m in selected_maquinas:
+                sub = df_comp[df_comp["Máquina"] == m]
+                resumo_list.append({
+                    "Máquina": m,
+                    "Total Chamados": len(sub),
+                    "Preventivas": len(sub[sub["Tipo"].str.contains("Preventiva", case=False, na=False)]),
+                    "Corretivas": len(sub[sub["Tipo"].str.contains("Corretiva", case=False, na=False)]),
+                    "Principal Problema": sub["Problema"].mode()[0] if not sub["Problema"].empty else "N/A",
+                    "Garantia": sub["Garantia"].iloc[0] if "Garantia" in sub.columns and not sub.empty else "N/A"
+                })
+            
+            st.dataframe(pd.DataFrame(resumo_list), use_container_width=True, hide_index=True)
+        else:
+            st.info("Selecione ao menos uma máquina no campo acima para gerar a análise.")
+
+# --- ABA 3: DESEMPENHO TÉCNICO & GARANTIAS ---
+with tab_tecnica:
     col_t1, col_t2 = st.columns(2)
     
     with col_t1:
@@ -216,7 +293,7 @@ with tab2:
             st.plotly_chart(fig_tech, use_container_width=True)
 
     with col_t2:
-        st.subheader("Status de Garantia")
+        st.subheader("Status do Parque referente à Garantia")
         if "Garantia" in df_filtered.columns and not df_filtered.empty:
             df_gar = df_filtered["Garantia"].value_counts().reset_index()
             df_gar.columns = ["Status", "Quantidade"]
@@ -230,6 +307,7 @@ with tab2:
             fig_gar.update_layout(height=340, margin=dict(t=20, b=20, l=20, r=20))
             st.plotly_chart(fig_gar, use_container_width=True)
 
-with tab3:
-    st.subheader("Tabela de Registros Filtrados")
+# --- ABA 4: RELATÓRIO COMPLETO ---
+with tab_relatorio:
+    st.subheader("📋 Base de Dados Operacional Filtrada")
     st.dataframe(df_filtered, use_container_width=True, hide_index=True)
