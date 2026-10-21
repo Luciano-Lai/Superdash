@@ -50,8 +50,28 @@ def apply_filters(df, spec, ignore=()):
     return result.copy()
 
 
+def _compute_default_period(valid_dates):
+    """
+    Default inteligente: se a base cobre mais de ~6 meses,
+    abre no último trimestre (90 dias) para que o delta tenha
+    janela anterior de igual duração. Caso contrário, usa o
+    intervalo completo (base curta não tem o que recortar).
+    """
+    max_dt = valid_dates.max()
+    min_dt = valid_dates.min()
+    span_days = (max_dt - min_dt).days
+
+    if span_days > 180:
+        start = (max_dt - pd.Timedelta(days=90)).date()
+        if start < min_dt.date():
+            start = min_dt.date()
+        return start, max_dt.date()
+
+    return min_dt.date(), max_dt.date()
+
+
 def previous_period(df, spec):
-    """Mesmo recorte, janela anterior de igual duração."""
+    """Mesmo recorte, janela anterior de igual duração (imediatamente antes)."""
     period = spec.get("period", ())
     if not (isinstance(period, (tuple, list)) and len(period) == 2):
         return df.iloc[0:0].copy()
@@ -178,16 +198,18 @@ def render_sidebar_filters(df):
                 **kwargs,
             )
 
-        # 3. Período (por último)
+        # 3. Período (por último) — default inteligente
         st.divider()
         valid_dates = df["Data da tarefa"].dropna()
         if valid_dates.empty:
             st.error("Não há datas válidas na base.")
             return df.iloc[0:0].copy(), False, False, {}
 
+        default_start, default_end = _compute_default_period(valid_dates)
+
         period = st.date_input(
             "Período",
-            value=(valid_dates.min().date(), valid_dates.max().date()),
+            value=(default_start, default_end),
             min_value=valid_dates.min().date(),
             max_value=valid_dates.max().date(),
             format="DD/MM/YYYY",
