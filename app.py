@@ -1,50 +1,37 @@
 import sys
 import os
-import importlib.util
 import streamlit as st
 import pandas as pd
 
-# 1. Ajuste dinâmico de caminhos do Python para encontrar a pasta 'view' e módulos raiz
+# 1. Configuração de caminhos para a pasta 'views' (no plural)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VIEWS_DIR = os.path.join(BASE_DIR, "views")
+
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+if VIEWS_DIR not in sys.path:
+    sys.path.insert(0, VIEWS_DIR)
 
-VIEW_DIR = os.path.join(BASE_DIR, "view")
-if os.path.exists(VIEW_DIR) and VIEW_DIR not in sys.path:
-    sys.path.insert(0, VIEW_DIR)
-
-# Importações dos módulos nativos do SuperDash
+# 2. Importações dos módulos base do SuperDash
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
 
-# Função de carregamento dinâmico e seguro para os arquivos da pasta view
-def load_view_module(module_name):
-    try:
-        # Tenta importar como pacote
-        return importlib.import_module(f"view.{module_name}")
-    except (ModuleNotFoundError, ImportError):
-        try:
-            # Tenta importar diretamente da raiz/sys.path
-            return importlib.import_module(module_name)
-        except (ModuleNotFoundError, ImportError):
-            # Tenta carregar explicitamente pelo caminho do arquivo no disco
-            file_path = os.path.join(VIEW_DIR, f"{module_name}.py")
-            if os.path.exists(file_path):
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                return mod
-            return None
+# 3. Importação das visões originais da pasta views
+try:
+    import views.monitoramento as v_mon
+    import views.maquinas as v_maq
+    import views.corretivas as v_corr
+    import views.clientes_regioes as v_cli
+    import views.analise_tarefas as v_tar
+except ModuleNotFoundError:
+    import monitoramento as v_mon
+    import maquinas as v_maq
+    import corretivas as v_corr
+    import clientes_regioes as v_cli
+    import analise_tarefas as v_tar
 
-# Carregamento resiliente de cada visão
-v_mon = load_view_module("monitoramento")
-v_maq = load_view_module("maquinas")
-v_corr = load_view_module("corretivas")
-v_cli = load_view_module("clientes_regioes")
-v_tar = load_view_module("analise_tarefas")
-
-# 2. Configuração da página executiva
+# 4. Configuração da página executiva
 st.set_page_config(
     page_title="SuperDash - Monitoramento de Refrigeração",
     page_icon="❄️",
@@ -52,7 +39,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 3. Estilização Executiva (Header & KPI Cards)
+# 5. Injeção de Estilo Executivo C-Level
 st.markdown("""
     <style>
         .main { background-color: #F8FAFC; }
@@ -126,17 +113,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 4. Carregamento e filtros de dados
+# 6. Carregamento dos dados
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
-    st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com a planilha.")
+    st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com o Google Sheets.")
     st.stop()
 
 filter_output = render_sidebar_filters(df_raw)
 df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
 
-# --- TOPO EXECUTIVO: CABEÇALHO & CARDS DE KPI ---
+# --- TOPO EXECUTIVO ---
 st.markdown("""
     <div class="exec-header-container">
         <div class="exec-header-title">❄️ SuperDash - Monitoramento & Inteligência de Refrigeração</div>
@@ -187,18 +174,17 @@ with c4:
 
 st.write("")
 
-# Helper seguro para execução das telas
-def safe_render(module, df):
-    if module is None:
-        st.warning("Módulo da aba não encontrado no projeto.")
-        return
-    for func_name in ["render_monitoramento", "render_maquinas", "render_corretivas", "render_clientes_regioes", "render_analise_tarefas", "render", "main"]:
-        if hasattr(module, func_name):
-            getattr(module, func_name)(df)
-            return
-    st.info("Visão sem função pública de renderização encontrada.")
+# Helper seguro para execução das funções públicas dos módulos
+def render_view_module(mod, df):
+    for attr in dir(mod):
+        if attr.startswith("render") or attr == "main":
+            func = getattr(mod, attr)
+            if callable(func):
+                func(df)
+                return
+    st.warning("O módulo foi carregado, mas nenhuma função de renderização foi encontrada.")
 
-# --- NAVEGAÇÃO POR ABAS COM TODAS AS FUNCIONALIDADES PRESERVADAS ---
+# --- NAVEGAÇÃO FLUIDA POR ABAS ---
 tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
     "📊 Monitoramento Geral", 
     "⚙️ Máquinas & Comparativos", 
@@ -209,19 +195,19 @@ tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
 ])
 
 with tab_mon:
-    safe_render(v_mon, df_filtered)
+    render_view_module(v_mon, df_filtered)
 
 with tab_maq:
-    safe_render(v_maq, df_filtered)
+    render_view_module(v_maq, df_filtered)
 
 with tab_corr:
-    safe_render(v_corr, df_filtered)
+    render_view_module(v_corr, df_filtered)
 
 with tab_cli:
-    safe_render(v_cli, df_filtered)
+    render_view_module(v_cli, df_filtered)
 
 with tab_taref:
-    safe_render(v_tar, df_filtered)
+    render_view_module(v_tar, df_filtered)
 
 with tab_raw:
     st.subheader("Base Operacional Completa")
