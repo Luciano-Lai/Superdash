@@ -18,8 +18,12 @@ TOOLTIPS = {
     "Total de tarefas": "Todas as tarefas do recorte atual.",
     "Preventivas": "Tarefas com Tipo = Preventiva.",
     "Corretivas": "Tarefas com Tipo = Corretiva.",
-    "% Preventivas": "Proporção de preventivas no total do recorte.",
-    "% Corretivas": "Proporção de corretivas no total do recorte.",
+    "% Preventivas":
+        "Proporção de preventivas no total do recorte. "
+        "O delta é em pontos percentuais (p.p.), não em variação relativa.",
+    "% Corretivas":
+        "Proporção de corretivas no total do recorte. "
+        "O delta é em pontos percentuais (p.p.), não em variação relativa.",
     "Máquinas atendidas": "Máquinas distintas com pelo menos uma tarefa.",
     "Técnicos envolvidos": "Técnicos distintos com pelo menos uma tarefa.",
     "Corretivas em garantia":
@@ -55,6 +59,24 @@ NUMERIC_KPIS = {
 }
 PERCENT_KPIS = {"% Preventivas", "% Corretivas"}
 TEXT_KPIS = {"Problema mais frequente", "Peça mais trocada"}
+
+
+def _as_number(value):
+    """
+    Converte o valor do KPI em float quando possível.
+    Aceita números crus e strings no formato '45,0%'.
+    Retorna None se não for numérico ('—', texto).
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.endswith("%"):
+            try:
+                return float(cleaned.replace("%", "").replace(",", ".").strip())
+            except ValueError:
+                return None
+    return None
 
 
 def occurrence_frame(df, column):
@@ -98,21 +120,38 @@ def calculate_kpis(df):
 
 
 def calculate_kpis_with_delta(df, previous_df=None):
+    """
+    Retorna (values, deltas, previous).
+
+    deltas[name] é:
+      - variação relativa em % (para contagens numéricas)
+      - diferença em pontos percentuais (p.p.) para KPIs de taxa
+    """
     current = calculate_kpis(df)
     if previous_df is None or previous_df.empty:
         return current, {}, {}
+
     previous = calculate_kpis(previous_df)
     deltas = {}
+
     for name, value in current.items():
-        pv = previous.get(name)
-        if (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and isinstance(pv, (int, float))
-            and not isinstance(pv, bool)
-            and pv > 0
-        ):
-            deltas[name] = (value - pv) / pv * 100
+        if name in TEXT_KPIS:
+            continue
+
+        cur_num = _as_number(value)
+        prev_num = _as_number(previous.get(name))
+
+        if cur_num is None or prev_num is None:
+            continue
+
+        if name in PERCENT_KPIS:
+            # Taxa: diferença em pontos percentuais
+            deltas[name] = cur_num - prev_num
+        else:
+            # Contagem: variação relativa
+            if prev_num > 0:
+                deltas[name] = (cur_num - prev_num) / prev_num * 100
+
     return current, deltas, previous
 
 
@@ -173,7 +212,7 @@ def _sparkline_svg(values, color="#0284C7", height=44):
 
     poly = " ".join(points)
     area = f"0,{h} {poly} {w},{h}"
-    grad_id = f"sg{abs(hash(tuple(numeric)))%100000}"
+    grad_id = f"sg{abs(hash(tuple(numeric))) % 100000}"
 
     return (
         f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
@@ -210,15 +249,6 @@ def _border_and_delta_class(name, delta):
     return "kpi-border-primary", "kpi-delta-flat"
 
 
-def _parse_percent(value):
-    if not isinstance(value, str) or not value.endswith("%"):
-        return None
-    try:
-        return float(value.replace("%", "").replace(",", ".").strip())
-    except ValueError:
-        return None
-
-
 def build_kpi_card(name, values, deltas, series, previous):
     value = values.get(name, "—")
     delta = deltas.get(name)
@@ -235,28 +265,33 @@ def build_kpi_card(name, values, deltas, series, previous):
         val_class = "kpi-value"
         display = str(value)
 
-    # --- Delta no canto superior direito ---
+    # ---------- Badge de delta (topo direito) ----------
     delta_html = ""
     if name not in TEXT_KPIS:
         if delta is not None:
             arrow = "▲" if delta > 0 else "▼" if delta < 0 else "≡"
-            d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
+            if name in PERCENT_KPIS:
+                d_fmt = f"{abs(delta):.1f} p.p.".replace(".", ",")
+                title = "Diferença em pontos percentuais vs período anterior"
+            else:
+                d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
+                title = "Variação relativa vs período anterior"
             delta_html = (
-                f'<span class="kpi-delta {delta_class}" '
-                f'title="Variação vs período anterior de mesma duração">'
+                f'<span class="kpi-delta {delta_class}" title="{escape(title)}">'
                 f'{arrow} {d_fmt}</span>'
             )
         else:
             delta_html = (
                 '<span class="kpi-delta kpi-delta-flat" '
-                'title="Sem período anterior para comparar. '
-                'Reduza a data inicial no filtro Período.">'
+                'title="Sem período anterior comparável. Reduza a data '
+                'inicial no filtro Período.">'
                 'sem base</span>'
             )
 
+    # ---------- Visualização interna ----------
     viz_html = ""
     if name in PERCENT_KPIS:
-        pct = _parse_percent(value)
+        pct = _as_number(value)
         if pct is not None:
             width = max(0, min(100, pct))
             if name == "% Corretivas":
@@ -289,10 +324,16 @@ def build_kpi_card(name, values, deltas, series, previous):
         if svg:
             viz_html = f'<div class="kpi-sparkline">{svg}</div>'
 
+    # ---------- Rodapé (valor anterior) ----------
     footer = ""
-    if name not in TEXT_KPIS and isinstance(prev_val, (int, float)):
-        prev_disp = f"{int(prev_val):,}".replace(",", ".")
-        footer = f"vs {prev_disp} no período anterior"
+    if name not in TEXT_KPIS:
+        prev_num = _as_number(prev_val)
+        if prev_num is not None:
+            if name in PERCENT_KPIS:
+                prev_disp = f"{prev_num:.1f}%".replace(".", ",")
+            else:
+                prev_disp = f"{int(prev_num):,}".replace(",", ".")
+            footer = f"vs {prev_disp} no período anterior"
     elif name in TEXT_KPIS and str(value).strip() not in {"—", ""}:
         footer = "no recorte atual"
 
