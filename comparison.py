@@ -12,9 +12,13 @@ from charts import (
 
 
 COLORS = [
-    "#245A81",
-    "#D58246",
+    "#245A81",   # A
+    "#D58246",   # B
+    "#2E9B6D",   # C
+    "#7C5CBF",   # D
 ]
+
+MAX_MACHINES = 4
 
 
 def comparison_base(raw, spec):
@@ -25,37 +29,19 @@ def comparison_base(raw, spec):
     )
 
 
-def split_machines(base, code_a, code_b):
-    if code_a == code_b:
+def split_machines(base, codes):
+    if len(codes) < 2:
+        raise ValueError("Selecione pelo menos duas máquinas diferentes.")
+    if len(set(codes)) != len(codes):
+        raise ValueError("Escolha máquinas diferentes.")
+    if len(codes) > MAX_MACHINES:
         raise ValueError(
-            "Escolha duas máquinas diferentes."
+            f"Compare no máximo {MAX_MACHINES} máquinas por vez."
         )
-
-    a = base.loc[
-        base["Máquina"].eq(code_a)
-    ].copy()
-
-    b = base.loc[
-        base["Máquina"].eq(code_b)
-    ].copy()
-
-    return a, b
+    return [base.loc[base["Máquina"].eq(c)].copy() for c in codes]
 
 
-def comparison_evolution(
-    a,
-    b,
-    label_a,
-    label_b,
-    period,
-    granularity="Mensal",
-):
-    """
-    Evolução comparativa com barras verticais agrupadas.
-
-    Cada período apresenta duas barras:
-    máquina A em azul e máquina B em laranja.
-    """
+def comparison_evolution(datasets, labels, period, granularity="Mensal"):
     frequency = {
         "Diária": "D",
         "Semanal": "W-SUN",
@@ -65,90 +51,56 @@ def comparison_evolution(
     start = pd.Timestamp(period[0])
     end = pd.Timestamp(period[1])
 
-    periods = pd.period_range(
-        start,
-        end,
-        freq=frequency,
-    )
-
+    periods = pd.period_range(start, end, freq=frequency)
     if len(periods) == 0:
         return None
 
     positions = list(range(len(periods)))
-
     axis_labels = []
     hover_periods = []
 
     for current in periods:
-        period_start = max(
-            current.start_time.normalize(),
-            start.normalize(),
-        )
-        period_end = min(
-            current.end_time.normalize(),
-            end.normalize(),
-        )
+        period_start = max(current.start_time.normalize(), start.normalize())
+        period_end = min(current.end_time.normalize(), end.normalize())
 
         if granularity == "Mensal":
-            axis_labels.append(
-                current.start_time.strftime("%m/%Y")
-            )
+            axis_labels.append(current.start_time.strftime("%m/%Y"))
         else:
-            axis_labels.append(
-                period_start.strftime("%d/%m/%Y")
-            )
+            axis_labels.append(period_start.strftime("%d/%m/%Y"))
 
         if granularity == "Diária":
-            hover_periods.append(
-                period_start.strftime("%d/%m/%Y")
-            )
+            hover_periods.append(period_start.strftime("%d/%m/%Y"))
         else:
             hover_periods.append(
-                f"{period_start:%d/%m/%Y}"
-                f" a {period_end:%d/%m/%Y}"
+                f"{period_start:%d/%m/%Y} a {period_end:%d/%m/%Y}"
             )
 
     fig = go.Figure()
     maximum = 0
 
-    for data, label, color in zip(
-        [a, b],
-        [label_a, label_b],
-        COLORS,
-    ):
-        valid = data.loc[
-            data["Data da tarefa"].notna()
-        ].copy()
-
+    for data, label, color in zip(datasets, labels, COLORS):
+        valid = data.loc[data["Data da tarefa"].notna()].copy()
         valid = valid.loc[
             valid["Data da tarefa"].ge(start)
-            & valid["Data da tarefa"].lt(
-                end + pd.Timedelta(days=1)
-            )
+            & valid["Data da tarefa"].lt(end + pd.Timedelta(days=1))
         ]
 
         counts = (
             valid.groupby(
-                valid["Data da tarefa"].dt.to_period(
-                    frequency
-                )
+                valid["Data da tarefa"].dt.to_period(frequency)
             )
             .size()
             .reindex(periods, fill_value=0)
             .astype(int)
         )
 
-        maximum = max(
-            maximum,
-            int(counts.max()) if len(counts) else 0,
-        )
+        maximum = max(maximum, int(counts.max()) if len(counts) else 0)
 
         fig.add_bar(
             x=positions,
             y=counts.values,
             name=str(label),
             marker_color=color,
-            offsetgroup=str(label),
             text=counts.values,
             textposition="outside",
             cliponaxis=False,
@@ -161,7 +113,6 @@ def comparison_evolution(
         )
 
     height = 580 if len(periods) <= 12 else 680
-
     if len(periods) > 30:
         height = 780
 
@@ -170,16 +121,12 @@ def comparison_evolution(
         f"Evolução comparativa — {granularity.lower()}",
         height,
     )
-
-    configure_category_axis(
-        fig,
-        axis_labels,
-    )
+    configure_category_axis(fig, axis_labels)
 
     fig.update_layout(
         barmode="group",
         bargap=0.25,
-        bargroupgap=0.08,
+        bargroupgap=0.06,
         hovermode="x",
         margin=dict(
             l=100,
@@ -199,48 +146,23 @@ def comparison_evolution(
             **integer_axis(maximum * 1.22),
         ),
     )
-
-    fig.update_xaxes(
-        title="Período",
-    )
+    fig.update_xaxes(title="Período")
 
     return revise_bar_labels(fig)
 
 
-def comparison_bars(
-    a,
-    b,
-    label_a,
-    label_b,
-):
-    categories = [
-        "Total de tarefas",
-        "Preventivas",
-        "Corretivas",
-    ]
-
+def comparison_bars(datasets, labels):
+    categories = ["Total de tarefas", "Preventivas", "Corretivas"]
     fig = go.Figure()
     maximum = 0
 
-    for data, label, color in zip(
-        [a, b],
-        [label_a, label_b],
-        COLORS,
-    ):
+    for data, label, color in zip(datasets, labels, COLORS):
         counts = [
             len(data),
-            int(
-                data["Tipo"].eq("Preventiva").sum()
-            ),
-            int(
-                data["Tipo"].eq("Corretiva").sum()
-            ),
+            int(data["Tipo"].eq("Preventiva").sum()),
+            int(data["Tipo"].eq("Corretiva").sum()),
         ]
-
-        maximum = max(
-            maximum,
-            max(counts),
-        )
+        maximum = max(maximum, max(counts))
 
         fig.add_bar(
             x=categories,
@@ -266,44 +188,25 @@ def comparison_bars(
         ),
     )
 
-    fig = style(
-        fig,
-        "Volume de manutenção — A × B",
-        540,
-    )
-
+    fig = style(fig, "Volume de manutenção — comparativo", 540)
     return revise_bar_labels(fig)
 
 
-def comparison_share(
-    a,
-    b,
-    label_a,
-    label_b,
-):
-    total = len(a) + len(b)
-
+def comparison_share(datasets, labels):
+    values = [len(d) for d in datasets]
+    total = sum(values)
     if total == 0:
         return None
 
     fig = go.Figure(
         go.Pie(
-            labels=[
-                str(label_a),
-                str(label_b),
-            ],
-            values=[
-                len(a),
-                len(b),
-            ],
+            labels=[str(l) for l in labels],
+            values=values,
             hole=0.65,
             sort=False,
             marker=dict(
-                colors=COLORS,
-                line=dict(
-                    color="white",
-                    width=1,
-                ),
+                colors=COLORS[: len(values)],
+                line=dict(color="white", width=1),
             ),
             textinfo="percent",
             textposition="inside",
@@ -317,12 +220,7 @@ def comparison_share(
         )
     )
 
-    fig = style(
-        fig,
-        "Participação entre as duas máquinas",
-        520,
-    )
-
+    fig = style(fig, "Participação entre as máquinas", 520)
     fig.update_layout(
         legend=dict(
             orientation="h",
@@ -331,83 +229,49 @@ def comparison_share(
             y=-0.06,
         )
     )
-
     fig.add_annotation(
-        text=f"{total}<br>tarefas A + B",
+        text=f"{total}<br>tarefas",
         x=0.5,
         y=0.5,
         showarrow=False,
         font=dict(size=17),
     )
-
     return fig
 
 
-def comparison_occurrences(
-    a,
-    b,
-    column,
-    label_a,
-    label_b,
-    top_n,
-):
-    ca = category_counts(
-        a,
-        column,
-    )
-    cb = category_counts(
-        b,
-        column,
-    )
+def comparison_occurrences(datasets, labels, column, top_n):
+    counts_list = [category_counts(d, column) for d in datasets]
 
-    joined = (
-        pd.concat(
-            [
-                ca.rename("A"),
-                cb.rename("B"),
-            ],
-            axis=1,
-        )
-        .fillna(0)
-        .astype(int)
-    )
+    joined = pd.concat(
+        [c.rename(str(l)) for c, l in zip(counts_list, labels)],
+        axis=1,
+    ).fillna(0).astype(int)
 
     if joined.empty:
         return None
 
-    joined["Total"] = (
-        joined["A"] + joined["B"]
-    )
-    joined["Categoria"] = (
-        joined.index.astype(str)
-    )
+    joined["Total"] = joined.sum(axis=1)
+    joined["Categoria"] = joined.index.astype(str)
 
     ordered = joined.sort_values(
         ["Total", "Categoria"],
         ascending=[False, True],
         kind="stable",
-    ).head(
-        max(1, int(top_n))
-    )
+    ).head(max(1, int(top_n)))
 
-    labels = ordered["Categoria"].tolist()
-    positions = list(range(len(labels)))
+    display_labels = ordered["Categoria"].tolist()
+    positions = list(range(len(display_labels)))
 
     fig = go.Figure()
 
-    for key, label, color in zip(
-        ["A", "B"],
-        [label_a, label_b],
-        COLORS,
-    ):
-        values = ordered[key].tolist()
-
+    for label, color in zip(labels, COLORS):
+        values = ordered[str(label)].tolist()
         fig.add_bar(
             x=positions,
             y=values,
             name=str(label),
             marker_color=color,
-            customdata=labels,
+            customdata=display_labels,
             text=values,
             textposition="outside",
             cliponaxis=False,
@@ -419,12 +283,11 @@ def comparison_occurrences(
         )
 
     maximum = int(
-        ordered[["A", "B"]].max().max()
+        ordered[[str(l) for l in labels]].max().max()
     )
 
-    height = 620 if len(labels) <= 10 else 740
-
-    if len(labels) > 20:
+    height = 620 if len(display_labels) <= 10 else 740
+    if len(display_labels) > 20:
         height = 850
 
     fig = style(
@@ -432,21 +295,17 @@ def comparison_occurrences(
         f"{column} — comparação por ocorrência",
         height,
     )
-
-    configure_category_axis(
-        fig,
-        labels,
-    )
+    configure_category_axis(fig, display_labels)
 
     fig.update_layout(
         barmode="group",
         bargap=0.25,
-        bargroupgap=0.08,
+        bargroupgap=0.06,
         margin=dict(
             l=110,
             r=90,
             t=130,
-            b=220 if len(labels) <= 20 else 250,
+            b=220 if len(display_labels) <= 20 else 250,
         ),
         legend=dict(
             orientation="h",
