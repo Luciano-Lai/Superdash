@@ -1,21 +1,39 @@
 import sys
 import os
 
-# 1. RESOLUÇÃO DE CAMINHOS: Garante que a raiz venha PRIMEIRO no sys.path.
-# Isso permite que os scripts dentro de view/ encontrem ui, charts, comparison, etc.
+# ==============================================================================
+# 1. RESOLUÇÃO DE CAMINHOS DO PYTHON (PASTA VIEWS)
+# ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR in sys.path:
     sys.path.remove(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
 
-VIEW_DIR = os.path.join(BASE_DIR, "view")
-if VIEW_DIR not in sys.path:
-    sys.path.append(VIEW_DIR)
+VIEWS_DIR = os.path.join(BASE_DIR, "views")
+if VIEWS_DIR not in sys.path:
+    sys.path.append(VIEWS_DIR)
 
+# ==============================================================================
+# 2. IMPORTAÇÃO DOS PACOTES E MÓDULOS NATIVOS
+# ==============================================================================
 import streamlit as st
 import pandas as pd
 
-# 2. Configuração de página Streamlit
+# Módulos base localizados na raiz do projeto
+from data_loader import load_and_normalize_data
+from filters import render_sidebar_filters
+from kpis import calculate_executive_kpis
+
+# Importação direta dos scripts da pasta views/
+import views.monitoramento as v_mon
+import views.maquinas as v_maq
+import views.corretivas as v_corr
+import views.clientes_regioes as v_cli
+import views.analise_tarefas as v_tar
+
+# ==============================================================================
+# 3. CONFIGURAÇÃO DA PÁGINA STREAMLIT
+# ==============================================================================
 st.set_page_config(
     page_title="SuperDash - Monitoramento Executivo",
     page_icon="❄️",
@@ -23,7 +41,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 3. Estilização C-Level (Header Executivo, Cards de KPI e Navegação em Abas)
+# ==============================================================================
+# 4. ESTILIZAÇÃO C-LEVEL (NAVY/SLATE, KPI CARDS & ABAS)
+# ==============================================================================
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -108,30 +128,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 4. Importação dos Módulos Nativos do SuperDash
-from data_loader import load_and_normalize_data
-from filters import render_sidebar_filters
-from kpis import calculate_executive_kpis
-
-# Importação direta das visões originais da pasta view/
-import view.monitoramento as v_mon
-import view.maquinas as v_maq
-import view.corretivas as v_corr
-import view.clientes_regioes as v_cli
-import view.analise_tarefas as v_tar
-
-# 5. Carregamento dos Dados
+# ==============================================================================
+# 5. CARREGAMENTO DOS DADOS & FILTROS GLOBAIS
+# ==============================================================================
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
     st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com a planilha.")
     st.stop()
 
-# 6. Aplicação de Filtros Globais
 filter_output = render_sidebar_filters(df_raw)
 df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
 
-# --- TOPO EXECUTIVO (HEADER + KPI CARDS) ---
+# ==============================================================================
+# 6. TOPO EXECUTIVO (HEADER & KPI CARDS)
+# ==============================================================================
 st.markdown("""
     <div class="exec-header-container">
         <div class="exec-header-title">❄️ SuperDash - Monitoramento Executivo de Refrigeração</div>
@@ -182,7 +193,7 @@ with c4:
 
 st.write("")
 
-# Helper seguro para chamar as funções de renderização originais de cada módulo na pasta view
+# Helper para executar as funções de renderização nativas da pasta views/
 def call_view_render(mod, df):
     for attr in dir(mod):
         if attr.startswith("render") or attr == "main":
@@ -195,7 +206,9 @@ def call_view_render(mod, df):
                     func()
                     return
 
-# --- NAVEGAÇÃO EXECUTIVA POR ABAS FLUIDAS ---
+# ==============================================================================
+# 7. NAVEGAÇÃO EXECUTIVA POR ABAS FLUIDAS
+# ==============================================================================
 t1, t2, t3, t4, t5, t6 = st.tabs([
     "📊 Monitoramento Geral", 
     "⚙️ Máquinas & Comparativos", 
