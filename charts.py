@@ -50,7 +50,6 @@ def style(fig, title, height=400):
         separators=",.",
     )
 
-    # Não mostrar a miniatura de navegação abaixo dos gráficos.
     fig.update_xaxes(
         rangeslider=dict(visible=False)
     )
@@ -110,12 +109,6 @@ def abbreviated_label(value, limit=32):
 
 
 def configure_category_axis(fig, labels):
-    """
-    Configura as categorias no eixo horizontal.
-
-    A miniatura inferior de navegação fica desativada.
-    Os nomes completos permanecem nos detalhes do cursor.
-    """
     count = len(labels)
 
     fig.update_xaxes(
@@ -146,10 +139,6 @@ def configure_category_axis(fig, labels):
 
 
 def revise_bar_labels(fig):
-    """
-    Mantém os valores das barras e reserva espaço
-    para sua apresentação acima do gráfico.
-    """
     maximums = {}
 
     for trace in fig.data:
@@ -255,7 +244,6 @@ def revise_bar_labels(fig):
             )
         )
 
-    # Proteção adicional para gráficos registrados pelo ui.py.
     fig.update_xaxes(
         rangeslider=dict(visible=False)
     )
@@ -308,6 +296,7 @@ def render_evolution_chart(
     granularity="Diária",
     chart_type="Barras",
     period=None,
+    compare_previous=None,
 ):
     data = df.loc[
         df["Data da tarefa"].notna()
@@ -441,12 +430,49 @@ def render_evolution_chart(
             ),
         )
 
+    # Sobreposição do período anterior
+    if compare_previous is not None and not compare_previous.empty:
+        prev_valid = compare_previous.loc[
+            compare_previous["Data da tarefa"].notna()
+        ].copy()
+
+        if not prev_valid.empty:
+            prev_periods = prev_valid["Data da tarefa"].dt.to_period(frequency)
+            prev_counts = prev_periods.value_counts().sort_index()
+
+            n = len(periods)
+            values = list(prev_counts.values)
+
+            if len(values) < n:
+                values = [0] * (n - len(values)) + values
+
+            values = values[-n:]
+
+            fig.add_scatter(
+                x=periods.start_time,
+                y=values,
+                name="Período anterior",
+                mode="lines",
+                line=dict(
+                    color="#9AA7B4",
+                    width=2,
+                    dash="dash",
+                ),
+                hovertemplate=(
+                    "Período anterior<br>"
+                    "%{x|%d/%m/%Y}<br>"
+                    "%{y:.0f} tarefas"
+                    "<extra></extra>"
+                ),
+            )
+
     fig.update_traces(
+        selector=dict(type="bar"),
         hovertemplate=(
             "%{x|%d/%m/%Y}<br>"
             "%{y:.0f} tarefas"
             "<extra>%{fullData.name}</extra>"
-        )
+        ),
     )
 
     fig.update_xaxes(
@@ -471,10 +497,6 @@ def render_horizontal_ranking(
     title,
     top_n=10,
 ):
-    """
-    Nome preservado para compatibilidade com ui.py.
-    A apresentação é sempre em barras verticais.
-    """
     counts = category_counts(
         df,
         column,
@@ -629,7 +651,6 @@ def abc_table(
     classes = []
     accumulated_before = 0
 
-    # Empates são tratados como um único bloco.
     for quantity in table["Quantidade"].drop_duplicates():
         block_size = int(
             table["Quantidade"]
