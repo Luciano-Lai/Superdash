@@ -243,6 +243,81 @@ def _coverage_pct(prev_df, window):
     return min(actual / duration, 1.0) * 100
 
 
+def _render_universe_period_controls(c, key_prefix, base_min, base_max):
+    """
+    Renderiza o seletor de período do universo.
+    Retorna ((data_inicio, data_fim), descricao).
+
+    Regra de ouro: o universo nunca pode ser menor que o recorte.
+    Os limites dos date_input garantem isso fisicamente:
+      - Início do universo: max_value = início do recorte (só pode ir para trás)
+      - Fim do universo:    min_value = fim do recorte    (só pode ir para frente)
+    """
+    cut_start, cut_end = c["spec"]["period"]
+    key = c["key"] + key_prefix
+
+    mode = widget(
+        "selectbox",
+        "Período do universo",
+        key + "_mode",
+        options=[
+            "Mesmo período do recorte",
+            "Todo o histórico registrado",
+            "Personalizado",
+        ],
+        help=(
+            "Mesmo período: mesmas datas do recorte. "
+            "Todo o histórico: todas as datas disponíveis na base. "
+            "Personalizado: escolha início e fim — sempre cobrindo o recorte."
+        ),
+    )
+
+    if mode == "Todo o histórico registrado":
+        return (base_min, base_max), (
+            f"todo o histórico ({base_min:%d/%m/%Y} a {base_max:%d/%m/%Y})"
+        )
+
+    if mode == "Mesmo período do recorte":
+        return (cut_start, cut_end), (
+            f"mesmo período ({cut_start:%d/%m/%Y} a {cut_end:%d/%m/%Y})"
+        )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        start_d = st.date_input(
+            "Início do universo",
+            value=cut_start,
+            min_value=base_min,
+            max_value=cut_start,
+            format="DD/MM/YYYY",
+            key=key + "_start",
+        )
+    with col2:
+        end_d = st.date_input(
+            "Fim do universo",
+            value=cut_end,
+            min_value=cut_end,
+            max_value=base_max,
+            format="DD/MM/YYYY",
+            key=key + "_end",
+        )
+
+    if isinstance(start_d, tuple):
+        start_d = start_d[0]
+    if isinstance(end_d, tuple):
+        end_d = end_d[0]
+
+    st.caption(
+        "O universo sempre inclui o recorte: o início não pode ser "
+        "posterior ao início do recorte, e o fim não pode ser anterior "
+        "ao fim do recorte."
+    )
+
+    return (start_d, end_d), (
+        f"personalizado ({start_d:%d/%m/%Y} a {end_d:%d/%m/%Y})"
+    )
+
+
 def generate_insights(df, prev_df, spec):
     if df is None or df.empty:
         return []
@@ -712,41 +787,104 @@ def ranking(c, column, title, associated, kind=None):
 
 
 def participation(c):
-    key = c["key"] + "universe"
     st.markdown("### Recorte × universo")
-    mode = widget(
-        "selectbox", "Universo de comparação", key,
+
+    valid_dates = c["raw"]["Data da tarefa"].dropna()
+    if valid_dates.empty:
+        st.info("A base não possui datas válidas para montar o universo.")
+        return
+
+    base_min = valid_dates.min().date()
+    base_max = valid_dates.max().date()
+    key = c["key"] + "universe"
+
+    universe_period, period_desc = _render_universe_period_controls(
+        c, "participation", base_min, base_max,
+    )
+
+    filter_mode = widget(
+        "selectbox",
+        "Filtros do universo",
+        key + "_filter",
         options=[
-            "Todas as tarefas no período",
-            "Mesmo tipo no período",
+            "Sem filtros adicionais",
+            "Manter filtros do recorte",
             "Personalizado",
         ],
+        help=(
+            "Sem filtros: universo amplo, todas as tarefas do período "
+            "escolhido. "
+            "Manter filtros: replica os filtros da lateral (Tipo, "
+            "Máquina, Técnico, Cliente, Estado, Região, Cidade). "
+            "Personalizado: escolha quais filtros manter."
+        ),
     )
-    spec = {"period": c["spec"]["period"], "Tipo": "Todas"}
-    if mode == "Mesmo tipo no período":
-        types = c["df"]["Tipo"].unique()
-        spec["Tipo"] = (
-            types[0] if len(types) == 1
-            else c["spec"].get("Tipo", "Todas")
-        )
-    elif mode == "Personalizado":
+
+    spec = {"period": universe_period, "Tipo": "Todas"}
+    filter_desc = "sem filtros adicionais"
+
+    if filter_mode == "Manter filtros do recorte":
+        if c["spec"].get("Tipo") and c["spec"]["Tipo"] != "Todas":
+            spec["Tipo"] = c["spec"]["Tipo"]
+        for col in COLUMNS:
+            if c["spec"].get(col):
+                spec[col] = c["spec"][col]
+        kept = sum(1 for col in COLUMNS if c["spec"].get(col))
+        if spec["Tipo"] != "Todas":
+            kept += 1
+        if kept:
+            filter_desc = (
+                f"mantendo filtros do recorte "
+                f"({kept} ativo{'s' if kept != 1 else ''})"
+            )
+    elif filter_mode == "Personalizado":
         candidates = [
             col for col in ["Tipo"] + list(COLUMNS)
             if c["spec"].get(col) and c["spec"].get(col) != "Todas"
         ]
-        keep = widget(
-            "multiselect", "Manter filtros no universo",
-            key + "keep", options=candidates, default=[],
-        )
-        for col in keep:
-            spec[col] = c["spec"][col]
+        if candidates:
+            keep = widget(
+                "multiselect",
+                "Manter filtros no universo",
+                key + "keep",
+                options=candidates,
+                default=[],
+                help=(
+                    "Marque os filtros do recorte que devem também "
+                    "restringir o universo."
+                ),
+            )
+            for col in keep:
+                spec[col] = c["spec"][col]
+            if keep:
+                filter_desc = (
+                    f"mantendo {', '.join(k.lower() for k in keep)}"
+                )
+
     universe = apply_filters(c["raw"], spec)
+
     st.caption(
-        f"{len(c['df'])} tarefas no recorte / {len(universe)} no "
-        "universo • mesmo período"
+        f"**{len(c['df'])}** tarefas no recorte / "
+        f"**{len(universe)}** no universo — {period_desc}, {filter_desc}."
     )
+
+    if len(universe) == 0:
+        st.info("Nenhuma tarefa no universo selecionado.")
+        return
+
+    cut_index = set(c["df"].index)
+    universe_index = set(universe.index)
+    if not cut_index.issubset(universe_index):
+        st.warning(
+            "O recorte não está inteiramente contido no universo. "
+            "Verifique se algum filtro do universo exclui registros "
+            "do recorte."
+        )
+        return
+
     registry(
-        c, "Participação do recorte no universo",
+        c,
+        "Participação do recorte no universo",
         render_cut_donut(universe, c["df"]),
         {"Total de tarefas"},
     )
@@ -783,28 +921,55 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
         return
     key = chart_key(c, title)
     st.markdown("### " + title)
+
     base = widget(
         "selectbox", "Base da análise ABC", key + "base",
         options=["Recorte atual", "Universo de comparação"],
+        help=(
+            "Recorte atual: analisa apenas as tarefas do recorte. "
+            "Universo de comparação: mantém os filtros do recorte, "
+            "exceto a dimensão analisada, para comparar a participação "
+            "das categorias do recorte no todo."
+        ),
     )
+
     analysis, highlight = source.copy(), None
+
     if base == "Universo de comparação":
-        filter_column = "Máquina" if column == "Rótulo da máquina" else column
+        valid_dates = c["raw"]["Data da tarefa"].dropna()
+        if valid_dates.empty:
+            base_min = c["spec"]["period"][0]
+            base_max = c["spec"]["period"][1]
+        else:
+            base_min = valid_dates.min().date()
+            base_max = valid_dates.max().date()
+
+        universe_period, period_desc = _render_universe_period_controls(
+            c, key + "_abc", base_min, base_max,
+        )
+
+        filter_column = (
+            "Máquina" if column == "Rótulo da máquina" else column
+        )
         analysis = apply_filters(
-            c["raw"], c["spec"], ignore=(filter_column,)
+            c["raw"],
+            {**c["spec"], "period": universe_period},
+            ignore=(filter_column,),
         )
         if kind:
             analysis = analysis.loc[analysis["Tipo"].eq(kind)]
         highlight = set(category_counts(source, column).index)
         st.caption(
-            f"Universo: mesmo período e demais filtros, sem o filtro "
-            f"de {filter_column.lower()}. Categorias do recorte "
-            "recebem contorno escuro."
+            f"Universo: {period_desc}, mantendo os filtros do recorte "
+            f"(exceto {filter_column.lower()}). Categorias do recorte "
+            f"recebem contorno escuro."
         )
+
     counts = category_counts(analysis, column)
     if counts.empty:
         st.info("Não há categorias válidas para esta análise.")
         return
+
     with st.expander(
         "Ajustes do Pareto principal — " + title, expanded=True
     ):
@@ -1485,59 +1650,4 @@ def render_maquinas():
             gran = widget(
                 "selectbox", "Agrupamento da comparação",
                 c["key"] + "compare_gran",
-                options=["Diária", "Semanal", "Mensal"],
-            )
-            registry(
-                c, "Evolução comparativa",
-                comparison_evolution(
-                    datasets, labels_list,
-                    c["spec"]["period"], gran,
-                ),
-                associated,
-            )
-        if "Participação comparativa" in c["selected"]:
-            registry(
-                c, "Participação comparativa",
-                comparison_share(datasets, labels_list), associated,
-            )
-        for name, column in [
-            ("Problemas comparativos", "Problema"),
-            ("Peças comparativas", "Peça"),
-        ]:
-            if name not in c["selected"]:
-                continue
-            all_cats = set()
-            for d in datasets:
-                all_cats |= set(category_counts(d, column).index)
-            if not all_cats:
-                st.info(
-                    "Sem ocorrências válidas para " + name + "."
-                )
-                continue
-            key = chart_key(c, name)
-            with st.expander("Top N — " + name):
-                own = widget(
-                    "checkbox", "Usar Top N individual",
-                    key + "own", value=False,
-                )
-                n = int(
-                    widget(
-                        "number_input", "Top N individual", key + "n",
-                        min_value=1, max_value=len(all_cats),
-                        value=min(10, len(all_cats)), step=1,
-                    )
-                    if own else c["top"]
-                )
-            registry(
-                c, name,
-                comparison_occurrences(
-                    datasets, labels_list, column, n
-                ),
-                {
-                    "Corretivas",
-                    "Problema mais frequente"
-                    if column == "Problema"
-                    else "Peça mais trocada",
-                },
-            )
-    finish(c)
+                options=["Diária", "Sem
