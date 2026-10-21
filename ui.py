@@ -1650,4 +1650,59 @@ def render_maquinas():
             gran = widget(
                 "selectbox", "Agrupamento da comparação",
                 c["key"] + "compare_gran",
-                options=["Diária", "Sem
+                options=["Diária", "Semanal", "Mensal"],
+            )
+            registry(
+                c, "Evolução comparativa",
+                comparison_evolution(
+                    datasets, labels_list,
+                    c["spec"]["period"], gran,
+                ),
+                associated,
+            )
+        if "Participação comparativa" in c["selected"]:
+            registry(
+                c, "Participação comparativa",
+                comparison_share(datasets, labels_list), associated,
+            )
+        for name, column in [
+            ("Problemas comparativos", "Problema"),
+            ("Peças comparativas", "Peça"),
+        ]:
+            if name not in c["selected"]:
+                continue
+            all_cats = set()
+            for d in datasets:
+                all_cats |= set(category_counts(d, column).index)
+            if not all_cats:
+                st.info(
+                    "Sem ocorrências válidas para " + name + "."
+                )
+                continue
+            key = chart_key(c, name)
+            with st.expander("Top N — " + name):
+                own = widget(
+                    "checkbox", "Usar Top N individual",
+                    key + "own", value=False,
+                )
+                n = int(
+                    widget(
+                        "number_input", "Top N individual", key + "n",
+                        min_value=1, max_value=len(all_cats),
+                        value=min(10, len(all_cats)), step=1,
+                    )
+                    if own else c["top"]
+                )
+            registry(
+                c, name,
+                comparison_occurrences(
+                    datasets, labels_list, column, n
+                ),
+                {
+                    "Corretivas",
+                    "Problema mais frequente"
+                    if column == "Problema"
+                    else "Peça mais trocada",
+                },
+            )
+    finish(c)
