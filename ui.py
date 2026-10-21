@@ -22,6 +22,7 @@ from kpis import (
     render_kpi_cards,
     occurrence_frame,
     calculate_kpis_with_delta,
+    compute_kpi_series,
 )
 from pdf_export import generate_pdf_report
 from comparison import (
@@ -31,18 +32,15 @@ from comparison import (
     comparison_bars,
     comparison_share,
     comparison_occurrences,
+    MAX_MACHINES,
 )
 
 
 EXECUTIVE_PRESETS = {
     "monitoramento": {
         "kpis": [
-            "Total de tarefas",
-            "Preventivas",
-            "Corretivas",
-            "% Corretivas",
-            "Máquinas atendidas",
-            "Técnicos envolvidos",
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Corretivas", "Máquinas atendidas", "Técnicos envolvidos",
         ],
         "charts": [
             "Evolução da operação",
@@ -52,23 +50,19 @@ EXECUTIVE_PRESETS = {
     },
     "corretivas": {
         "kpis": [
-            "Corretivas",
-            "Problema mais frequente",
-            "Peça mais trocada",
-            "Corretivas em garantia",
+            "Corretivas", "Problema mais frequente",
+            "Peça mais trocada", "Corretivas em garantia",
         ],
         "charts": [
             "Falhas relatadas",
             "Falhas por classe ABC",
             "Peças utilizadas",
-            "Evolução das corretivas",
+            "Peças por classe ABC",
         ],
     },
     "analise_tarefas": {
         "kpis": [
-            "Total de tarefas",
-            "Técnicos envolvidos",
-            "Máquinas atendidas",
+            "Total de tarefas", "Técnicos envolvidos", "Máquinas atendidas",
         ],
         "charts": [
             "Ritmo dos atendimentos",
@@ -78,10 +72,8 @@ EXECUTIVE_PRESETS = {
     },
     "maquinas": {
         "kpis": [
-            "Total de tarefas",
-            "% Corretivas",
-            "Problema mais frequente",
-            "Peça mais trocada",
+            "Total de tarefas", "% Corretivas",
+            "Problema mais frequente", "Peça mais trocada",
         ],
         "charts": [
             "Histórico do equipamento",
@@ -89,10 +81,7 @@ EXECUTIVE_PRESETS = {
         ],
     },
     "clientes_regioes": {
-        "kpis": [
-            "Total de tarefas",
-            "Máquinas atendidas",
-        ],
+        "kpis": ["Total de tarefas", "Máquinas atendidas"],
         "charts": [],
     },
 }
@@ -102,14 +91,91 @@ def apply_theme():
     st.markdown(
         """<style>
 .block-container{max-width:1550px;padding-top:2rem;padding-bottom:3rem}
-.kpi-card{background:var(--secondary-background-color,#fff);border:1px solid #DCE4EC;
-          border-radius:12px;padding:18px;min-height:145px;box-sizing:border-box;
-          margin-bottom:14px}
-.kpi-label{font-size:.83rem;opacity:.8;margin-bottom:12px}
-.kpi-value{font-weight:650;line-height:1.25;overflow-wrap:anywhere}
+
+.kpi-card{
+  background:#FFFFFF;
+  border:1px solid #E2E8F0;
+  border-radius:12px;
+  padding:18px 20px 16px 22px;
+  box-shadow:0 1px 3px 0 rgba(0,0,0,0.04),0 1px 2px 0 rgba(0,0,0,0.02);
+  margin-bottom:12px;
+  transition:box-shadow .15s ease,transform .15s ease;
+  position:relative;
+  overflow:hidden;
+  min-height:150px;
+}
+.kpi-card:hover{
+  box-shadow:0 4px 12px -2px rgba(0,0,0,0.10);
+  transform:translateY(-1px);
+}
+.kpi-card::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:4px;
+}
+.kpi-border-primary::before{background:linear-gradient(180deg,#0284C7 0%,#0369A1 100%);}
+.kpi-border-success::before{background:linear-gradient(180deg,#16A34A 0%,#15803D 100%);}
+.kpi-border-warning::before{background:linear-gradient(180deg,#F59E0B 0%,#D97706 100%);}
+.kpi-border-danger::before {background:linear-gradient(180deg,#DC2626 0%,#B91C1C 100%);}
+.kpi-border-neutral::before{background:linear-gradient(180deg,#94A3B8 0%,#64748B 100%);}
+
+.kpi-header{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:8px;margin-bottom:8px;
+}
+.kpi-label{
+  font-size:11px;font-weight:700;color:#64748B;
+  text-transform:uppercase;letter-spacing:.5px;
+  line-height:1.3;
+}
+.kpi-help{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;border-radius:50%;
+  background:#E2E8F0;color:#64748B;
+  font-size:10px;font-weight:700;
+  cursor:help;user-select:none;flex-shrink:0;
+}
+
+.kpi-value-row{
+  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+  margin-top:2px;
+}
+.kpi-value{
+  font-size:30px;font-weight:800;color:#0F172A;
+  line-height:1.05;letter-spacing:-.5px;
+}
+.kpi-value-text{
+  font-size:15px;font-weight:700;color:#0F172A;
+  line-height:1.3;overflow-wrap:anywhere;
+}
+
+.kpi-delta{
+  display:inline-flex;align-items:center;gap:2px;
+  font-size:12px;font-weight:700;
+  padding:2px 7px;border-radius:6px;
+  white-space:nowrap;
+}
+.kpi-delta-good{color:#15803D;background:#DCFCE7;}
+.kpi-delta-bad {color:#B91C1C;background:#FEE2E2;}
+.kpi-delta-flat{color:#475569;background:#F1F5F9;}
+
+.kpi-sparkline{margin:8px 0 2px 0;height:28px;}
+
+.kpi-progress{
+  margin:12px 0 4px 0;height:6px;
+  background:#F1F5F9;border-radius:3px;overflow:hidden;
+}
+.kpi-progress-fill{
+  height:100%;border-radius:3px;
+  transition:width .3s ease;
+}
+
+.kpi-footer{
+  font-size:11px;color:#94A3B8;margin-top:6px;line-height:1.4;
+}
+
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 16px 0}
 .chip{background:#fff;border:1px solid #DCE4EC;border-radius:999px;
       padding:4px 12px;font-size:.78rem;color:#172B4D;white-space:nowrap}
+
 .insights-title{font-size:1.05rem;font-weight:650;margin:8px 0 10px 0;color:#172B4D}
 .insight-item{display:flex;gap:10px;padding:10px 14px;margin-bottom:6px;
               background:#fff;border-left:3px solid #245A81;
@@ -142,17 +208,13 @@ def widget(kind, label, key, **kwargs):
     def save():
         st.session_state[saved] = st.session_state[key]
 
-    result = getattr(st, kind)(
-        label, key=key, on_change=save, **kwargs
-    )
+    result = getattr(st, kind)(label, key=key, on_change=save, **kwargs)
     st.session_state[saved] = result
     return result
 
 
 def norm_header(value):
-    text = unicodedata.normalize(
-        "NFKD", str(value).strip().casefold()
-    )
+    text = unicodedata.normalize("NFKD", str(value).strip().casefold())
     return " ".join(
         "".join(ch for ch in text if not unicodedata.combining(ch)).split()
     )
@@ -270,6 +332,10 @@ def context(page_id, title, subtitle, corrective=False):
     if corrective:
         prev = prev.loc[prev["Tipo"].eq("Corretiva")]
 
+    effective_spec = dict(spec)
+    if corrective:
+        effective_spec["Tipo"] = "Corretiva"
+
     labels = dict(
         zip(ctx["raw"]["Máquina"], ctx["raw"]["Seleção da máquina"])
     )
@@ -310,6 +376,7 @@ def context(page_id, title, subtitle, corrective=False):
         id=page_id,
         raw=ctx["raw"],
         spec=spec,
+        effective_spec=effective_spec,
         df=data,
         prev=prev,
         figures={},
@@ -339,7 +406,13 @@ def registry(c, name, fig, kpis):
 
 
 def configuration(c, kpi_options, chart_options):
-    values, deltas = calculate_kpis_with_delta(c["df"], c.get("prev"))
+    values, deltas, previous = calculate_kpis_with_delta(
+        c["df"], c.get("prev")
+    )
+    series = compute_kpi_series(
+        c["raw"],
+        c.get("effective_spec") or c["spec"],
+    )
     available_kpis = [k for k in kpi_options if k in values]
     kpi_saved = c["key"] + "kpis_saved"
     chart_saved = c["key"] + "analyses_saved"
@@ -431,6 +504,8 @@ def configuration(c, kpi_options, chart_options):
     c.update(
         values=values,
         deltas=deltas,
+        previous=previous,
+        series=series,
         kpis=selected_kpis,
         selected=selected if selected_kpis else [],
         top=int(top),
@@ -439,7 +514,10 @@ def configuration(c, kpi_options, chart_options):
 
     if selected_kpis:
         st.subheader("Indicadores do recorte")
-        render_kpi_cards(selected_kpis, values, deltas)
+        render_kpi_cards(
+            selected_kpis, values,
+            deltas=deltas, series=series, previous=previous,
+        )
     else:
         st.info(
             "Selecione indicadores para habilitar as análises desta página."
@@ -453,24 +531,18 @@ def evolution(c, name="Evolução no período"):
     left, mid, right = st.columns(3)
     with left:
         gran = widget(
-            "selectbox",
-            "Agrupamento",
-            key + "gran",
+            "selectbox", "Agrupamento", key + "gran",
             options=["Diária", "Semanal", "Mensal"],
         )
     with mid:
         visual = widget(
-            "selectbox",
-            "Visual",
-            key + "visual",
+            "selectbox", "Visual", key + "visual",
             options=["Barras", "Linha", "Barras + linha acumulada"],
         )
     with right:
         compare = widget(
-            "checkbox",
-            "Sobrepor período anterior",
-            key + "cmp",
-            value=True,
+            "checkbox", "Sobrepor período anterior",
+            key + "cmp", value=True,
         )
 
     prev = c.get("prev") if compare else None
@@ -480,11 +552,8 @@ def evolution(c, name="Evolução no período"):
     registry(
         c, name, fig,
         {
-            "Total de tarefas",
-            "Preventivas",
-            "Corretivas",
-            "% Preventivas",
-            "% Corretivas",
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Preventivas", "% Corretivas",
         },
     )
 
@@ -504,35 +573,24 @@ def ranking(c, column, title, associated, kind=None):
     st.markdown("### " + title)
     with st.expander("Ajustes — " + title):
         own = widget(
-            "checkbox",
-            "Definir Top N individual",
-            key + "override",
-            value=False,
+            "checkbox", "Definir Top N individual",
+            key + "override", value=False,
         )
         n = int(
             widget(
-                "number_input",
-                "Top N individual",
-                key + "n",
-                min_value=1,
-                max_value=len(counts),
-                value=min(10, len(counts)),
-                step=1,
+                "number_input", "Top N individual", key + "n",
+                min_value=1, max_value=len(counts),
+                value=min(10, len(counts)), step=1,
             )
-            if own
-            else c["top"]
+            if own else c["top"]
         )
         pair = widget(
-            "checkbox",
-            "Mostrar distribuição do recorte",
-            key + "pair",
-            value=False,
+            "checkbox", "Mostrar distribuição do recorte",
+            key + "pair", value=False,
         )
         others = widget(
-            "checkbox",
-            "Agrupar restante em Outras",
-            key + "others",
-            value=True,
+            "checkbox", "Agrupar restante em Outras",
+            key + "others", value=True,
         )
     bars = render_horizontal_ranking(source, column, title, n)
     st.caption(
@@ -570,9 +628,7 @@ def participation(c):
     key = c["key"] + "universe"
     st.markdown("### Recorte × universo")
     mode = widget(
-        "selectbox",
-        "Universo de comparação",
-        key,
+        "selectbox", "Universo de comparação", key,
         options=[
             "Todas as tarefas no período",
             "Mesmo tipo no período",
@@ -583,7 +639,8 @@ def participation(c):
     if mode == "Mesmo tipo no período":
         types = c["df"]["Tipo"].unique()
         spec["Tipo"] = (
-            types[0] if len(types) == 1 else c["spec"].get("Tipo", "Todas")
+            types[0] if len(types) == 1
+            else c["spec"].get("Tipo", "Todas")
         )
     elif mode == "Personalizado":
         candidates = [
@@ -591,11 +648,8 @@ def participation(c):
             if c["spec"].get(col) and c["spec"].get(col) != "Todas"
         ]
         keep = widget(
-            "multiselect",
-            "Manter filtros no universo",
-            key + "keep",
-            options=candidates,
-            default=[],
+            "multiselect", "Manter filtros no universo",
+            key + "keep", options=candidates, default=[],
         )
         for col in keep:
             spec[col] = c["spec"][col]
@@ -605,8 +659,7 @@ def participation(c):
         "universo • mesmo período"
     )
     registry(
-        c,
-        "Participação do recorte no universo",
+        c, "Participação do recorte no universo",
         render_cut_donut(universe, c["df"]),
         {"Total de tarefas"},
     )
@@ -617,11 +670,8 @@ def composition(c, title):
         c, title,
         render_donut_chart(c["df"], "Tipo", title, 10, True),
         {
-            "Total de tarefas",
-            "Preventivas",
-            "Corretivas",
-            "% Preventivas",
-            "% Corretivas",
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Preventivas", "% Corretivas",
         },
     )
 
@@ -647,9 +697,7 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
     key = chart_key(c, title)
     st.markdown("### " + title)
     base = widget(
-        "selectbox",
-        "Base da análise ABC",
-        key + "base",
+        "selectbox", "Base da análise ABC", key + "base",
         options=["Recorte atual", "Universo de comparação"],
     )
     analysis, highlight = source.copy(), None
@@ -674,19 +722,13 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
         "Ajustes do Pareto principal — " + title, expanded=True
     ):
         all_items = widget(
-            "checkbox",
-            "Exibir todas as categorias no Pareto principal",
-            key + "show_all",
-            value=False,
+            "checkbox", "Exibir todas as categorias no Pareto principal",
+            key + "show_all", value=False,
         )
         n = widget(
-            "number_input",
-            "Top N do Pareto principal",
-            key + "principal_top",
-            min_value=1,
-            max_value=len(counts),
-            value=min(c["top"], len(counts)),
-            step=1,
+            "number_input", "Top N do Pareto principal",
+            key + "principal_top", min_value=1, max_value=len(counts),
+            value=min(c["top"], len(counts)), step=1,
             disabled=all_items,
         )
         left, right = st.columns(2)
@@ -724,8 +766,7 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
     )
     st.markdown("#### Composição da Curva ABC")
     registry(
-        c,
-        title + " — classes",
+        c, title + " — classes",
         render_abc_donut(abc, title + " — classes A, B e C", unit),
         associated,
     )
@@ -757,9 +798,7 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
         for col in ["Participação (%)", "Acumulado (%)"]:
             display_abc[col] = display_abc[col].round(2)
         st.dataframe(
-            display_abc,
-            hide_index=True,
-            use_container_width=True,
+            display_abc, hide_index=True, use_container_width=True,
             column_config={
                 "Categoria": st.column_config.TextColumn(
                     "Categoria", width="large"
@@ -787,15 +826,11 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
         return
     st.markdown("#### Detalhar uma classe")
     selected = widget(
-        "selectbox",
-        "Classe para detalhar",
-        key + "class",
+        "selectbox", "Classe para detalhar", key + "class",
         options=available,
         format_func=lambda letter: "Classe " + letter,
     )
-    members = abc.loc[
-        abc["Classe"].eq(selected), "Categoria"
-    ].tolist()
+    members = abc.loc[abc["Classe"].eq(selected), "Categoria"].tolist()
     subset = _category_rows(analysis, column, members)
     options = [item for item in drilldown if item in subset.columns]
     if subset.empty or not options:
@@ -806,9 +841,7 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
         f"{len(subset)} tarefas relacionadas."
     )
     breakdown = widget(
-        "selectbox",
-        "Analisar a classe por",
-        key + "breakdown",
+        "selectbox", "Analisar a classe por", key + "breakdown",
         options=options,
     )
     inner_counts = category_counts(subset, breakdown)
@@ -823,19 +856,13 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
         "Ajustes do Pareto interno — " + breakdown, expanded=True
     ):
         inner_all = widget(
-            "checkbox",
-            "Exibir todas as categorias neste detalhamento",
-            inner_key + "all",
-            value=False,
+            "checkbox", "Exibir todas as categorias neste detalhamento",
+            inner_key + "all", value=False,
         )
         inner_n = widget(
-            "number_input",
-            "Top N deste detalhamento",
-            inner_key + "top",
-            min_value=1,
-            max_value=len(inner_counts),
-            value=min(c["top"], len(inner_counts)),
-            step=1,
+            "number_input", "Top N deste detalhamento",
+            inner_key + "top", min_value=1, max_value=len(inner_counts),
+            value=min(c["top"], len(inner_counts)), step=1,
             disabled=inner_all,
         )
     inner_top_n = None if inner_all else int(inner_n)
@@ -851,8 +878,7 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
         associated,
     )
     inner_shown = (
-        inner_counts
-        if inner_top_n is None
+        inner_counts if inner_top_n is None
         else inner_counts.head(inner_top_n)
     )
     inner_total = int(inner_counts.sum())
@@ -913,15 +939,12 @@ def details(c):
             )
         prefix = c["key"] + "detail"
         size = st.selectbox(
-            "Registros por página",
-            [15, 25, 50, 100],
+            "Registros por página", [15, 25, 50, 100],
             key=prefix + "size",
         )
         signature = hashlib.sha1(
             (
-                repr(c["spec"])
-                + repr(data.index.tolist())
-                + str(size)
+                repr(c["spec"]) + repr(data.index.tolist()) + str(size)
             ).encode()
         ).hexdigest()
         pages = max(1, math.ceil(len(data) / size))
@@ -932,10 +955,7 @@ def details(c):
             st.session_state[prefix + "page"] = 1
         page = int(
             st.number_input(
-                "Página",
-                min_value=1,
-                max_value=pages,
-                step=1,
+                "Página", min_value=1, max_value=pages, step=1,
                 key=prefix + "page",
             )
         )
@@ -943,8 +963,7 @@ def details(c):
         st.caption(f"{len(data)} registros • página {page} de {pages}")
         st.dataframe(
             ordered.iloc[(page - 1) * size:page * size][shown],
-            hide_index=True,
-            use_container_width=True,
+            hide_index=True, use_container_width=True,
         )
 
 
@@ -953,37 +972,29 @@ def finish(c):
         st.markdown("#### Exportação PDF")
         key = c["key"] + "pdf"
         names = widget(
-            "multiselect",
-            "Gráficos para o PDF",
-            key + "charts",
-            options=list(c["figures"]),
-            default=[],
+            "multiselect", "Gráficos para o PDF",
+            key + "charts", options=list(c["figures"]), default=[],
         )
         allowed = (
             set(c["values"]) if not names
             else set().union(*(c["associations"][name] for name in names))
         )
         selected = widget(
-            "multiselect",
-            "Indicadores para o PDF",
-            key + "kpis",
-            options=[k for k in c["values"] if k in allowed],
+            "multiselect", "Indicadores para o PDF",
+            key + "kpis", options=[k for k in c["values"] if k in allowed],
             default=[],
         )
         st.caption(
             "Os indicadores exportados pertencem ao recorte da página. "
             "Gráficos do universo podem usar uma base maior. "
-            "Na comparação, os indicadores são do conjunto A + B."
+            "Na comparação, os indicadores são do conjunto das máquinas."
         )
         count = widget(
-            "selectbox",
-            "Gráficos por página",
-            key + "count",
+            "selectbox", "Gráficos por página", key + "count",
             options=[1, 2, 3, 4],
         )
         if st.button(
-            "Gerar PDF",
-            key=key + "generate",
+            "Gerar PDF", key=key + "generate",
             disabled=not (names or selected),
         ):
             try:
@@ -993,8 +1004,7 @@ def finish(c):
                     count,
                 )
                 st.download_button(
-                    "Baixar PDF",
-                    pdf,
+                    "Baixar PDF", pdf,
                     "painel_" + c["id"] + ".pdf",
                     "application/pdf",
                     key=key + "download",
@@ -1038,15 +1048,13 @@ def render_monitoramento():
         ranking(
             c, "Rótulo da máquina",
             "Equipamentos com mais corretivas",
-            {"Corretivas", "Máquinas atendidas"},
-            "Corretiva",
+            {"Corretivas", "Máquinas atendidas"}, "Corretiva",
         )
     if "Máquinas por classe ABC" in c["selected"]:
         concentration(
             c, "Rótulo da máquina",
             "Máquinas por classe ABC — corretivas",
-            {"Corretivas", "Máquinas atendidas"},
-            "Corretiva",
+            {"Corretivas", "Máquinas atendidas"}, "Corretiva",
             ["Técnico", "Problema", "Tarefa"],
         )
     if "Recorte × universo" in c["selected"]:
@@ -1099,16 +1107,14 @@ def render_analise_tarefas():
             c, "Rótulo da máquina",
             "Concentração de tarefas por equipamento",
             {"Total de tarefas", "Máquinas atendidas"},
-            None,
-            ["Tarefa", "Técnico"],
+            None, ["Tarefa", "Técnico"],
         )
     if "Concentração de tarefas por responsável" in c["selected"]:
         concentration(
             c, "Técnico",
             "Concentração de tarefas por responsável",
             {"Total de tarefas", "Técnicos envolvidos"},
-            None,
-            ["Rótulo da máquina", "Tarefa"],
+            None, ["Rótulo da máquina", "Tarefa"],
         )
     finish(c)
 
@@ -1145,10 +1151,8 @@ def render_corretivas():
         )
     if "Falhas por classe ABC" in c["selected"]:
         concentration(
-            c, "Problema",
-            "Falhas por classe ABC — corretivas",
-            {"Corretivas", "Problema mais frequente"},
-            "Corretiva",
+            c, "Problema", "Falhas por classe ABC — corretivas",
+            {"Corretivas", "Problema mais frequente"}, "Corretiva",
             ["Rótulo da máquina", "Técnico", "Tarefa"],
         )
     if "Peças utilizadas" in c["selected"]:
@@ -1158,10 +1162,8 @@ def render_corretivas():
         )
     if "Peças por classe ABC" in c["selected"]:
         concentration(
-            c, "Peça",
-            "Peças por classe ABC — corretivas",
-            {"Corretivas", "Peça mais trocada"},
-            "Corretiva",
+            c, "Peça", "Peças por classe ABC — corretivas",
+            {"Corretivas", "Peça mais trocada"}, "Corretiva",
             ["Rótulo da máquina", "Problema", "Técnico"],
         )
     if "Serviços corretivos" in c["selected"]:
@@ -1210,11 +1212,9 @@ def render_clientes_regioes():
                 series.loc[series.ne("")].unique(), key=norm_header
             )
             chosen = widget(
-                "multiselect",
-                col + " nesta página",
+                "multiselect", col + " nesta página",
                 c["key"] + "local_" + col,
-                options=options,
-                default=[],
+                options=options, default=[],
             )
             if chosen:
                 c["df"] = c["df"].loc[series.isin(chosen)].copy()
@@ -1257,7 +1257,7 @@ def render_clientes_regioes():
 def render_maquinas():
     c = context(
         "maquinas", "Máquinas",
-        "Explore uma máquina ou compare duas no mesmo contexto.",
+        "Explore uma máquina ou compare até quatro no mesmo contexto.",
     )
     if c is None:
         return
@@ -1275,15 +1275,12 @@ def render_maquinas():
     codes = sorted(
         base["Máquina"].unique(),
         key=lambda code: (
-            norm_header(labels.get(code, code)),
-            str(code),
+            norm_header(labels.get(code, code)), str(code),
         ),
     )
     mode = widget(
-        "radio",
-        "Modo de análise",
-        c["key"] + "mode",
-        options=["Uma máquina", "Comparar A × B"],
+        "radio", "Modo de análise", c["key"] + "mode",
+        options=["Uma máquina", f"Comparar até {MAX_MACHINES} máquinas"],
         horizontal=True,
     )
 
@@ -1293,23 +1290,18 @@ def render_maquinas():
             else labels.get(code, code)
         )
 
-    code_a = widget(
-        "selectbox",
-        "Máquina A" if mode == "Comparar A × B" else "Equipamento",
-        c["key"] + "machine_a",
-        options=[None] + codes,
-        format_func=label_func,
-    )
-    if code_a is None:
-        st.info("Escolha o equipamento para iniciar a análise.")
-        return
-    a = base.loc[base["Máquina"].eq(code_a)].copy()
-
     if mode == "Uma máquina":
-        c["df"] = a
-        c["prev"] = previous_period(
-            c["raw"], {**c["spec"], "Máquina": [code_a]}
+        code_a = widget(
+            "selectbox", "Equipamento", c["key"] + "machine_a",
+            options=[None] + codes, format_func=label_func,
         )
+        if code_a is None:
+            st.info("Escolha o equipamento para iniciar a análise.")
+            return
+        a = base.loc[base["Máquina"].eq(code_a)].copy()
+        c["df"] = a
+        c["effective_spec"] = {**c["spec"], "Máquina": [code_a]}
+        c["prev"] = previous_period(c["raw"], c["effective_spec"])
         st.subheader(labels.get(code_a, code_a))
         configuration(
             c,
@@ -1346,26 +1338,29 @@ def render_maquinas():
                 {"Total de tarefas"},
             )
     else:
-        code_b = widget(
-            "selectbox",
-            "Máquina B",
-            c["key"] + "machine_b",
-            options=[None] + [v for v in codes if v != code_a],
-            format_func=label_func,
+        selected_codes = widget(
+            "multiselect", "Máquinas para comparar",
+            c["key"] + "machines",
+            options=codes,
+            default=codes[:2] if len(codes) >= 2 else codes,
+            max_selections=MAX_MACHINES,
+            format_func=lambda code: labels.get(code, code),
         )
-        if code_b is None:
+        if len(selected_codes) < 2:
             st.info(
-                "Escolha uma segunda máquina diferente da primeira."
+                "Selecione pelo menos duas máquinas para comparar."
             )
             return
-        a, b = split_machines(base, code_a, code_b)
+        datasets = split_machines(base, selected_codes)
+        labels_list = [labels.get(code, code) for code in selected_codes]
         c["df"] = base.loc[
-            base["Máquina"].isin([code_a, code_b])
+            base["Máquina"].isin(selected_codes)
         ].copy()
-        c["prev"] = previous_period(
-            c["raw"], {**c["spec"], "Máquina": [code_a, code_b]}
-        )
-        la, lb = labels.get(code_a, code_a), labels.get(code_b, code_b)
+        c["effective_spec"] = {
+            **c["spec"], "Máquina": list(selected_codes),
+        }
+        c["prev"] = previous_period(c["raw"], c["effective_spec"])
+
         configuration(
             c,
             [
@@ -1374,20 +1369,17 @@ def render_maquinas():
                 "Problema mais frequente", "Peça mais trocada",
             ],
             [
-                "Volume A × B",
-                "Evolução A × B",
-                "Participação A × B",
-                "Problemas A × B",
-                "Peças A × B",
+                "Volume comparativo",
+                "Evolução comparativa",
+                "Participação comparativa",
+                "Problemas comparativos",
+                "Peças comparativas",
             ],
         )
         if c["kpis"]:
             st.subheader("Indicadores individuais")
-            left, right = st.columns(2)
-            for slot, data, label in [
-                (left, a, la),
-                (right, b, lb),
-            ]:
+            cols = st.columns(len(datasets))
+            for slot, data, label in zip(cols, datasets, labels_list):
                 with slot:
                     st.markdown("#### " + label)
                     stats = calculate_kpis(data)
@@ -1397,43 +1389,40 @@ def render_maquinas():
             "Total de tarefas", "Preventivas", "Corretivas",
             "% Corretivas", "Máquinas atendidas",
         }
-        if "Volume A × B" in c["selected"]:
+        if "Volume comparativo" in c["selected"]:
             registry(
-                c, "Volume A × B",
-                comparison_bars(a, b, la, lb),
-                associated,
+                c, "Volume comparativo",
+                comparison_bars(datasets, labels_list), associated,
             )
-        if "Evolução A × B" in c["selected"]:
+        if "Evolução comparativa" in c["selected"]:
             gran = widget(
-                "selectbox",
-                "Agrupamento da comparação",
+                "selectbox", "Agrupamento da comparação",
                 c["key"] + "compare_gran",
                 options=["Diária", "Semanal", "Mensal"],
             )
             registry(
-                c, "Evolução A × B",
+                c, "Evolução comparativa",
                 comparison_evolution(
-                    a, b, la, lb, c["spec"]["period"], gran
+                    datasets, labels_list,
+                    c["spec"]["period"], gran,
                 ),
                 associated,
             )
-        if "Participação A × B" in c["selected"]:
+        if "Participação comparativa" in c["selected"]:
             registry(
-                c, "Participação A × B",
-                comparison_share(a, b, la, lb),
-                associated,
+                c, "Participação comparativa",
+                comparison_share(datasets, labels_list), associated,
             )
         for name, column in [
-            ("Problemas A × B", "Problema"),
-            ("Peças A × B", "Peça"),
+            ("Problemas comparativos", "Problema"),
+            ("Peças comparativas", "Peça"),
         ]:
             if name not in c["selected"]:
                 continue
-            total_categories = len(
-                set(category_counts(a, column).index)
-                | set(category_counts(b, column).index)
-            )
-            if not total_categories:
+            all_cats = set()
+            for d in datasets:
+                all_cats |= set(category_counts(d, column).index)
+            if not all_cats:
                 st.info(
                     "Sem ocorrências válidas para " + name + "."
                 )
@@ -1441,27 +1430,22 @@ def render_maquinas():
             key = chart_key(c, name)
             with st.expander("Top N — " + name):
                 own = widget(
-                    "checkbox",
-                    "Usar Top N individual",
-                    key + "own",
-                    value=False,
+                    "checkbox", "Usar Top N individual",
+                    key + "own", value=False,
                 )
                 n = int(
                     widget(
-                        "number_input",
-                        "Top N individual",
-                        key + "n",
-                        min_value=1,
-                        max_value=total_categories,
-                        value=min(10, total_categories),
-                        step=1,
+                        "number_input", "Top N individual", key + "n",
+                        min_value=1, max_value=len(all_cats),
+                        value=min(10, len(all_cats)), step=1,
                     )
-                    if own
-                    else c["top"]
+                    if own else c["top"]
                 )
             registry(
                 c, name,
-                comparison_occurrences(a, b, column, la, lb, n),
+                comparison_occurrences(
+                    datasets, labels_list, column, n
+                ),
                 {
                     "Corretivas",
                     "Problema mais frequente"
