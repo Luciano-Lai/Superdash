@@ -7,8 +7,14 @@ from filters import (
     import_state_from_url,
     export_state_to_url,
 )
-from ui import apply_theme
-
+try:
+    from ui import apply_theme
+except SyntaxError as error:
+    import traceback
+    st.error(f"SyntaxError em: {error.filename} (linha {error.lineno})")
+    st.code(traceback.format_exc())
+    st.stop()
+    
 
 st.set_page_config(
     page_title="Painel de Refrigeração",
