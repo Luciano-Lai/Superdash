@@ -4,37 +4,31 @@ import importlib
 import streamlit as st
 import pandas as pd
 
-# 1. Configuração estrita de caminhos
+# 1. Ajuste estrito de caminhos para o Python encontrar os módulos da raiz
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIEWS_DIR = os.path.join(BASE_DIR, "views")
 
-# Garante que o diretório raiz seja a PRIORIDADE ABSOLUTA para importações (como 'from ui import ...')
-if BASE_DIR in sys.path:
-    sys.path.remove(BASE_DIR)
-sys.path.insert(0, BASE_DIR)
+# Garante que o diretório raiz seja a primeira prioridade
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+if VIEWS_DIR not in sys.path:
+    sys.path.append(VIEWS_DIR)
 
-if VIEWS_DIR in sys.path:
-    sys.path.remove(VIEWS_DIR)
-sys.path.append(VIEWS_DIR)
-
-# 2. Importações dos módulos base do SuperDash (Localizados na Raiz)
+# 2. Importações primárias da raiz (data_loader, filters, kpis e ui)
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
+import ui  # Carrega ui.py explicitamente do diretório raiz
 
-# 3. Importação segura dos módulos de visão
-try:
-    v_mon = importlib.import_module("views.monitoramento")
-    v_maq = importlib.import_module("views.maquinas")
-    v_corr = importlib.import_module("views.corretivas")
-    v_cli = importlib.import_module("views.clientes_regioes")
-    v_tar = importlib.import_module("views.analise_tarefas")
-except ImportError:
-    v_mon = importlib.import_module("monitoramento")
-    v_maq = importlib.import_module("maquinas")
-    v_corr = importlib.import_module("corretivas")
-    v_cli = importlib.import_module("clientes_regioes")
-    v_tar = importlib.import_module("analise_tarefas")
+# Garante que o módulo 'ui' fique registrado globalmente para os scripts dentro de /views/
+sys.modules['ui'] = ui
+
+# 3. Importação das telas da pasta 'views'
+import views.monitoramento as v_mon
+import views.maquinas as v_maq
+import views.corretivas as v_corr
+import views.clientes_regioes as v_cli
+import views.analise_tarefas as v_tar
 
 # 4. Configuração da página executiva
 st.set_page_config(
@@ -44,7 +38,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 5. Injeção de Estilo Executivo C-Level (Header & KPI Cards)
+# 5. Injeção de Estilo Executivo (Header & KPI Cards)
 st.markdown("""
     <style>
         .main { background-color: #F8FAFC; }
@@ -118,7 +112,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 6. Carregamento e Filtro dos Dados
+# 6. Carregamento dos dados brutos e aplicação de filtros
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
@@ -179,7 +173,7 @@ with c4:
 
 st.write("")
 
-# Helper para chamar as funções de renderização de cada módulo da pasta views
+# Helper para executar a função pública de renderização de cada módulo
 def render_view_module(mod, df):
     for attr in dir(mod):
         if attr.startswith("render") or attr == "main":
