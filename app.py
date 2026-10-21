@@ -1,31 +1,40 @@
 import sys
 import os
+import importlib
 import streamlit as st
 import pandas as pd
 
-# 1. Configuração prioritária dos caminhos no sys.path
+# 1. Configuração estrita de caminhos
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIEWS_DIR = os.path.join(BASE_DIR, "views")
 
-# O diretório RAIZ DEVE ser o primeiro (index 0) para que 'from ui import ...' encontre /ui.py
+# Garante que o diretório raiz seja a PRIORIDADE ABSOLUTA para importações (como 'from ui import ...')
 if BASE_DIR in sys.path:
     sys.path.remove(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
 
-if VIEWS_DIR not in sys.path:
-    sys.path.append(VIEWS_DIR)
+if VIEWS_DIR in sys.path:
+    sys.path.remove(VIEWS_DIR)
+sys.path.append(VIEWS_DIR)
 
-# 2. Importações dos módulos base do SuperDash
+# 2. Importações dos módulos base do SuperDash (Localizados na Raiz)
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
 
-# 3. Importação das visões mantendo o pacote 'views' visível para os scripts internos
-import views.monitoramento as v_mon
-import views.maquinas as v_maq
-import views.corretivas as v_corr
-import views.clientes_regioes as v_cli
-import views.analise_tarefas as v_tar
+# 3. Importação segura dos módulos de visão
+try:
+    v_mon = importlib.import_module("views.monitoramento")
+    v_maq = importlib.import_module("views.maquinas")
+    v_corr = importlib.import_module("views.corretivas")
+    v_cli = importlib.import_module("views.clientes_regioes")
+    v_tar = importlib.import_module("views.analise_tarefas")
+except ImportError:
+    v_mon = importlib.import_module("monitoramento")
+    v_maq = importlib.import_module("maquinas")
+    v_corr = importlib.import_module("corretivas")
+    v_cli = importlib.import_module("clientes_regioes")
+    v_tar = importlib.import_module("analise_tarefas")
 
 # 4. Configuração da página executiva
 st.set_page_config(
@@ -35,7 +44,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 5. Injeção de Estilo Executivo C-Level
+# 5. Injeção de Estilo Executivo C-Level (Header & KPI Cards)
 st.markdown("""
     <style>
         .main { background-color: #F8FAFC; }
@@ -109,11 +118,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 6. Carregamento dos dados
+# 6. Carregamento e Filtro dos Dados
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
-    st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com o Google Sheets.")
+    st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com a planilha.")
     st.stop()
 
 filter_output = render_sidebar_filters(df_raw)
@@ -170,7 +179,7 @@ with c4:
 
 st.write("")
 
-# Helper para executar a função pública de renderização de cada módulo
+# Helper para chamar as funções de renderização de cada módulo da pasta views
 def render_view_module(mod, df):
     for attr in dir(mod):
         if attr.startswith("render") or attr == "main":
