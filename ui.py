@@ -464,3 +464,470 @@ def _render_comparison_legend(c, deltas, reasons):
             f"ficar distorcidos. Percentuais (% preventivas e "
             f"% corretivas) não são afetados."
         )
+
+def configuration(c, kpi_options, chart_options):
+    values, deltas, previous, reasons = calculate_kpis_with_delta(
+        c["df"], c.get("prev")
+    )
+    series = compute_kpi_series(
+        c["raw"],
+        c.get("effective_spec") or c["spec"],
+    )
+    available_kpis = [k for k in kpi_options if k in values]
+    kpi_saved = c["key"] + "kpis_saved"
+    chart_saved = c["key"] + "analyses_saved"
+    preset = EXECUTIVE_PRESETS.get(c["id"], {})
+
+    if kpi_saved not in st.session_state:
+        st.session_state[kpi_saved] = [
+            k for k in preset.get("kpis", []) if k in available_kpis
+        ]
+    if chart_saved not in st.session_state:
+        st.session_state[chart_saved] = [
+            k for k in preset.get("charts", []) if k in chart_options
+        ]
+
+    with st.expander("⚙️  Indicadores, análises e PDF", expanded=True):
+        col_a, col_b = st.columns([1, 5])
+        if col_a.button(
+            "↩ Restaurar",
+            key=c["key"] + "reset",
+            help="Volta à visão inicial desta página",
+            use_container_width=True,
+        ):
+            st.session_state[kpi_saved] = [
+                k for k in preset.get("kpis", []) if k in available_kpis
+            ]
+            st.session_state[chart_saved] = [
+                k for k in preset.get("charts", []) if k in chart_options
+            ]
+            st.toast("Visão inicial restaurada.", icon="↩")
+
+        left, right = st.columns(2)
+        if left.button(
+            "Selecionar todos os indicadores",
+            key=c["key"] + "all_kpis",
+        ):
+            st.session_state[kpi_saved] = list(available_kpis)
+            st.toast("Todos os indicadores foram selecionados.", icon="✅")
+        if right.button(
+            "Limpar indicadores",
+            key=c["key"] + "none_kpis",
+        ):
+            st.session_state[kpi_saved] = []
+            st.toast("Indicadores limpos.", icon="🧹")
+
+        selected_kpis = widget(
+            "multiselect",
+            "Indicadores desta página",
+            c["key"] + "kpis",
+            options=available_kpis,
+            default=[],
+        )
+
+        left, right = st.columns(2)
+        if left.button(
+            "Selecionar todas as análises",
+            key=c["key"] + "all",
+            disabled=not selected_kpis,
+        ):
+            st.session_state[chart_saved] = list(chart_options)
+            st.toast("Todas as análises foram selecionadas.", icon="✅")
+        if right.button(
+            "Limpar análises",
+            key=c["key"] + "none",
+        ):
+            st.session_state[chart_saved] = []
+            st.toast("Análises limpas.", icon="🧹")
+
+        selected = widget(
+            "multiselect",
+            "Análises desta página",
+            c["key"] + "analyses",
+            options=chart_options,
+            default=[],
+            disabled=not selected_kpis,
+        )
+
+        top = widget(
+            "number_input",
+            "Nível de detalhe (Top N)",
+            "dash_global_top",
+            min_value=1,
+            value=10,
+            step=1,
+            help="Quantidade de categorias exibidas nos rankings e roscas.",
+        )
+
+        export_slot = st.container()
+
+    c.update(
+        values=values,
+        deltas=deltas,
+        previous=previous,
+        reasons=reasons,
+        series=series,
+        kpis=selected_kpis,
+        selected=selected if selected_kpis else [],
+        top=int(top),
+        export_slot=export_slot,
+    )
+
+    if selected_kpis:
+        st.subheader("Indicadores do recorte")
+        render_kpi_cards(
+            selected_kpis, values,
+            deltas=deltas, series=series, previous=previous,
+            reasons=reasons,
+        )
+        _render_comparison_legend(c, deltas, reasons)
+    else:
+        st.info(
+            "Selecione indicadores para habilitar as análises desta página."
+        )
+
+    return c
+
+
+def evolution(c, name="Evolução no período"):
+    key = chart_key(c, name)
+    prev_available = c.get("prev") is not None and not c["prev"].empty
+
+    left, mid, right = st.columns(3)
+    with left:
+        gran = widget(
+            "selectbox", "Agrupamento", key + "gran",
+            options=["Diária", "Semanal", "Mensal"],
+        )
+    with mid:
+        visual = widget(
+            "selectbox", "Visual", key + "visual",
+            options=["Barras", "Linha", "Barras + linha acumulada"],
+        )
+    with right:
+        if prev_available:
+            compare = widget(
+                "checkbox",
+                "Comparar com período anterior",
+                key + "cmp",
+                value=True,
+                help=(
+                    "Sobreponha o período anterior (mesma duração) como "
+                    "linha tracejada cinza. Este controle afeta apenas "
+                    "este gráfico — os cards de KPI calculam o delta "
+                    "independentemente."
+                ),
+            )
+        else:
+            compare = False
+            st.markdown("**Comparação**")
+            st.caption("sem período anterior")
+
+    prev = c.get("prev") if compare and prev_available else None
+    fig = render_evolution_chart(
+        c["df"], gran, visual, c["spec"]["period"], prev,
+    )
+    registry(
+        c, name, fig,
+        {
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Preventivas", "% Corretivas",
+        },
+    )
+    if not prev_available:
+        st.caption(
+            "💡 Para comparar com um período anterior, reduza a "
+            "**data inicial** no filtro Período da lateral."
+        )
+
+
+def ranking(c, column, title, associated, kind=None):
+    source = c["df"]
+    if kind:
+        source = source.loc[source["Tipo"].eq(kind)]
+    if source.empty or column not in source.columns:
+        st.info("Não há registros para " + title.lower() + ".")
+        return
+    counts = category_counts(source, column)
+    if counts.empty:
+        st.info("Não há ocorrências válidas para " + title.lower() + ".")
+        return
+    key = chart_key(c, title)
+    st.markdown("### " + title)
+    with st.expander("Ajustes — " + title):
+        own = widget(
+            "checkbox", "Definir Top N individual",
+            key + "override", value=False,
+        )
+        n = int(
+            widget(
+                "number_input", "Top N individual", key + "n",
+                min_value=1, max_value=len(counts),
+                value=min(10, len(counts)), step=1,
+            )
+            if own else c["top"]
+        )
+        pair = widget(
+            "checkbox", "Mostrar distribuição do recorte",
+            key + "pair", value=False,
+        )
+        others = widget(
+            "checkbox", "Agrupar restante em Outras",
+            key + "others", value=True,
+        )
+    bars = render_horizontal_ranking(source, column, title, n)
+    st.caption(
+        f"{len(counts)} categorias no recorte • "
+        f"{min(n, len(counts))} exibidas no ranking"
+    )
+    if not pair:
+        registry(c, title, bars, associated)
+        return
+    donut_title = title + " — distribuição no recorte"
+    donut = render_donut_chart(source, column, donut_title, n, others)
+    entries = min(n, len(counts)) + int(others and len(counts) > n)
+    if entries <= 10:
+        left, right = st.columns([1.1, 1])
+        with left:
+            registry(c, title, bars, associated)
+        with right:
+            registry(c, donut_title, donut, associated)
+    else:
+        registry(c, title, bars, associated)
+        st.markdown("#### Distribuição do recorte")
+        st.caption(
+            f"{entries} entradas na rosca. A distribuição ocupa uma "
+            "área própria."
+        )
+        registry(c, donut_title, donut, associated)
+    if not others and len(counts) > n:
+        st.caption(
+            "Sem “Outras”, os percentuais da rosca consideram somente "
+            "as categorias exibidas."
+        )
+
+
+def composition(c, title):
+    registry(
+        c, title,
+        render_donut_chart(c["df"], "Tipo", title, 10, True),
+        {
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Preventivas", "% Corretivas",
+        },
+    )
+
+
+def _category_rows(df, column, members):
+    if column in {"Problema", "Peça"}:
+        occurrences = occurrence_frame(df, column)
+        indexes = occurrences.loc[
+            occurrences[column].isin(members)
+        ].index.unique()
+        return df.loc[df.index.isin(indexes)].copy()
+    values = df[column].fillna("").astype(str).str.strip()
+    return df.loc[values.isin(members)].copy()
+
+
+def concentration(c, column, title, associated, kind=None, drilldown=()):
+    source = c["df"]
+    if kind:
+        source = source.loc[source["Tipo"].eq(kind)]
+    if source.empty or column not in source.columns:
+        st.info("Não há registros para " + title.lower() + ".")
+        return
+    key = chart_key(c, title)
+    st.markdown("### " + title)
+
+    analysis = source.copy()
+    counts = category_counts(analysis, column)
+    if counts.empty:
+        st.info("Não há categorias válidas para esta análise.")
+        return
+
+    with st.expander(
+        "Ajustes do Pareto principal — " + title, expanded=True
+    ):
+        all_items = widget(
+            "checkbox", "Exibir todas as categorias no Pareto principal",
+            key + "show_all", value=False,
+        )
+        n = widget(
+            "number_input", "Top N do Pareto principal",
+            key + "principal_top", min_value=1, max_value=len(counts),
+            value=min(c["top"], len(counts)), step=1,
+            disabled=all_items,
+        )
+        left, right = st.columns(2)
+        a_percent = left.number_input(
+            "Limite da classe A (%)",
+            min_value=1, max_value=98, value=80, step=1,
+            key=key + "a",
+        )
+        b_percent = right.number_input(
+            "Limite da classe B (%)",
+            min_value=2, max_value=100, value=95, step=1,
+            key=key + "b",
+        )
+
+    if b_percent <= a_percent:
+        st.warning("O limite da classe B deve ser maior que o da A.")
+        return
+
+    a, b = a_percent / 100, b_percent / 100
+    abc = abc_table(counts, a, b)
+    unit = (
+        "ocorrências" if column in {"Problema", "Peça"} else "tarefas"
+    )
+    total = int(abc["Quantidade"].sum())
+    top_n = None if all_items else int(n)
+    registry(
+        c, title,
+        render_pareto_chart(counts, title, top_n, None, a, b, unit),
+        associated,
+    )
+    shown = abc if top_n is None else abc.head(top_n)
+    shown_total = int(shown["Quantidade"].sum())
+    st.caption(
+        f"Exibindo {len(shown)} de {len(abc)} categorias — "
+        f"{shown_total / total * 100:.2f}% do volume "
+        f"({total} {unit} na base). O Top N não altera a ABC."
+    )
+
+    st.markdown("#### Composição da Curva ABC")
+    registry(
+        c, title + " — classes",
+        render_abc_donut(abc, title + " — classes A, B e C", unit),
+        associated,
+    )
+    summary = (
+        abc.groupby("Classe")
+        .agg(
+            Categorias=("Categoria", "nunique"),
+            Volume=("Quantidade", "sum"),
+        )
+        .reindex(["A", "B", "C"])
+        .fillna(0)
+    )
+    for slot, letter in zip(st.columns(3), ["A", "B", "C"]):
+        volume = int(summary.loc[letter, "Volume"])
+        items = int(summary.loc[letter, "Categorias"])
+        slot.metric(
+            "Classe " + letter,
+            f"{volume:,}".replace(",", "."),
+            f"{items} categoria(s) • {volume / total * 100:.2f}%",
+            delta_color="off",
+        )
+
+    with st.expander("Tabela de classificação ABC"):
+        display_abc = abc.rename(
+            columns={
+                "Participação": "Participação (%)",
+                "Acumulado %": "Acumulado (%)",
+            }
+        ).copy()
+        for col in ["Participação (%)", "Acumulado (%)"]:
+            display_abc[col] = display_abc[col].round(2)
+        st.dataframe(
+            display_abc, hide_index=True, use_container_width=True,
+            column_config={
+                "Categoria": st.column_config.TextColumn(
+                    "Categoria", width="large"
+                ),
+                "Quantidade": st.column_config.NumberColumn(
+                    "Quantidade", format="%d"
+                ),
+                "Participação (%)": st.column_config.NumberColumn(
+                    "Participação (%)", format="%.2f"
+                ),
+                "Acumulado": st.column_config.NumberColumn(
+                    "Acumulado", format="%d"
+                ),
+                "Acumulado (%)": st.column_config.NumberColumn(
+                    "Acumulado (%)", format="%.2f"
+                ),
+                "Classe": st.column_config.TextColumn("Classe"),
+            },
+        )
+
+    available = [
+        letter for letter in ["A", "B", "C"]
+        if summary.loc[letter, "Categorias"] > 0
+    ]
+    if not drilldown or not available:
+        return
+
+    st.markdown("#### Detalhar uma classe")
+    selected = widget(
+        "selectbox", "Classe para detalhar", key + "class",
+        options=available,
+        format_func=lambda letter: "Classe " + letter,
+    )
+    members = abc.loc[abc["Classe"].eq(selected), "Categoria"].tolist()
+    subset = _category_rows(analysis, column, members)
+    options = [item for item in drilldown if item in subset.columns]
+    if subset.empty or not options:
+        st.info("Sem registros válidos para o detalhamento.")
+        return
+    st.caption(
+        f"Classe {selected}: {len(members)} categorias • "
+        f"{len(subset)} tarefas relacionadas."
+    )
+    breakdown = widget(
+        "selectbox", "Analisar a classe por", key + "breakdown",
+        options=options,
+    )
+    inner_counts = category_counts(subset, breakdown)
+    if inner_counts.empty:
+        st.info("Sem ocorrências válidas neste detalhamento.")
+        return
+    suffix = hashlib.sha1(
+        (selected + "|" + breakdown).encode()
+    ).hexdigest()[:12]
+    inner_key = key + "_inner_" + suffix
+    with st.expander(
+        "Ajustes do Pareto interno — " + breakdown, expanded=True
+    ):
+        inner_all = widget(
+            "checkbox", "Exibir todas as categorias neste detalhamento",
+            inner_key + "all", value=False,
+        )
+        inner_n = widget(
+            "number_input", "Top N deste detalhamento",
+            inner_key + "top", min_value=1, max_value=len(inner_counts),
+            value=min(c["top"], len(inner_counts)), step=1,
+            disabled=inner_all,
+        )
+    inner_top_n = None if inner_all else int(inner_n)
+    inner_unit = (
+        "ocorrências" if breakdown in {"Problema", "Peça"} else "tarefas"
+    )
+    inner_title = title + f" — classe {selected} — {breakdown.lower()}"
+    registry(
+        c, inner_title,
+        render_pareto_chart(
+            inner_counts, inner_title, inner_top_n, None, a, b, inner_unit
+        ),
+        associated,
+    )
+    inner_shown = (
+        inner_counts if inner_top_n is None
+        else inner_counts.head(inner_top_n)
+    )
+    inner_total = int(inner_counts.sum())
+    coverage = (
+        float(inner_shown.sum()) / inner_total * 100 if inner_total else 0
+    )
+    st.caption(
+        f"Exibindo {len(inner_shown)} de {len(inner_counts)} categorias "
+        f"— {coverage:.2f}% do volume deste detalhamento "
+        f"({inner_total} {inner_unit})."
+    )
+    st.caption(
+        "O acumulado deste detalhamento usa somente o volume da classe "
+        "selecionada. As cores indicam uma ABC interna, sem alterar a "
+        "classificação original. Os controles internos são independentes "
+        "dos controles principais."
+    )
+
+
