@@ -1,36 +1,19 @@
-import sys
-import os
-import importlib
 import streamlit as st
 import pandas as pd
 
-# 1. Ajuste estrito de caminhos para o Python encontrar os módulos da raiz
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VIEWS_DIR = os.path.join(BASE_DIR, "views")
-
-# Garante que o diretório raiz seja a primeira prioridade
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-if VIEWS_DIR not in sys.path:
-    sys.path.append(VIEWS_DIR)
-
-# 2. Importações primárias da raiz (data_loader, filters, kpis e ui)
+# Importações originais do seu projeto SuperDash
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
-import ui  # Carrega ui.py explicitamente do diretório raiz
 
-# Garante que o módulo 'ui' fique registrado globalmente para os scripts dentro de /views/
-sys.modules['ui'] = ui
+# Importação dos módulos originais da pasta views
+from views.monitoramento import render_monitoramento
+from views.maquinas import render_maquinas
+from views.corretivas import render_corretivas
+from views.clientes_regioes import render_clientes_regioes
+from views.analise_tarefas import render_analise_tarefas
 
-# 3. Importação das telas da pasta 'views'
-import views.monitoramento as v_mon
-import views.maquinas as v_maq
-import views.corretivas as v_corr
-import views.clientes_regioes as v_cli
-import views.analise_tarefas as v_tar
-
-# 4. Configuração da página executiva
+# 1. Configuração de página original
 st.set_page_config(
     page_title="SuperDash - Monitoramento de Refrigeração",
     page_icon="❄️",
@@ -38,11 +21,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 5. Injeção de Estilo Executivo (Header & KPI Cards)
+# 2. CSS aplicado APENAS aos Cards e Cabeçalho do Topo (Primeira Parte)
 st.markdown("""
     <style>
-        .main { background-color: #F8FAFC; }
-        
         .exec-header-container {
             background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
             padding: 22px 28px;
@@ -96,33 +77,22 @@ st.markdown("""
             color: #64748B;
             margin-top: 6px;
         }
-
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 6px;
-            background-color: #E2E8F0;
-            padding: 6px;
-            border-radius: 10px;
-        }
-        .stTabs [aria-selected="true"] {
-            background-color: #FFFFFF !important;
-            color: #0284C7 !important;
-            font-weight: 700;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.06);
-        }
     </style>
 """, unsafe_allow_html=True)
 
-# 6. Carregamento dos dados brutos e aplicação de filtros
+# 3. Carregamento dos dados originais
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
-    st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com a planilha.")
+    st.error("⚠️ Não foi possível carregar os dados.")
     st.stop()
 
+# 4. Filtros originais da barra lateral
 filter_output = render_sidebar_filters(df_raw)
 df_filtered = filter_output[0] if isinstance(filter_output, tuple) else filter_output
 
-# --- TOPO EXECUTIVO ---
+# --- PRIMEIRA PARTE: CABEÇALHO & CARDS EXECUTIVOS ---
+
 st.markdown("""
     <div class="exec-header-container">
         <div class="exec-header-title">❄️ SuperDash - Monitoramento & Inteligência de Refrigeração</div>
@@ -173,17 +143,8 @@ with c4:
 
 st.write("")
 
-# Helper para executar a função pública de renderização de cada módulo
-def render_view_module(mod, df):
-    for attr in dir(mod):
-        if attr.startswith("render") or attr == "main":
-            func = getattr(mod, attr)
-            if callable(func):
-                func(df)
-                return
-    st.warning("O módulo foi carregado, mas nenhuma função de renderização foi encontrada.")
+# --- SEGUNDA PARTE: NAVEGAÇÃO E RECURSOS ORIGINAIS DO SUPERDASH ---
 
-# --- NAVEGAÇÃO FLUIDA POR ABAS ---
 tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
     "📊 Monitoramento Geral", 
     "⚙️ Máquinas & Comparativos", 
@@ -194,19 +155,19 @@ tab_mon, tab_maq, tab_corr, tab_cli, tab_taref, tab_raw = st.tabs([
 ])
 
 with tab_mon:
-    render_view_module(v_mon, df_filtered)
+    render_monitoramento(df_filtered)
 
 with tab_maq:
-    render_view_module(v_maq, df_filtered)
+    render_maquinas(df_filtered)
 
 with tab_corr:
-    render_view_module(v_corr, df_filtered)
+    render_corretivas(df_filtered)
 
 with tab_cli:
-    render_view_module(v_cli, df_filtered)
+    render_clientes_regioes(df_filtered)
 
 with tab_taref:
-    render_view_module(v_tar, df_filtered)
+    render_analise_tarefas(df_filtered)
 
 with tab_raw:
     st.subheader("Base Operacional Completa")
