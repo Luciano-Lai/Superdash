@@ -51,7 +51,7 @@ def apply_filters(df, spec, ignore=()):
 
 
 def previous_period(df, spec):
-    """Mesmo recorte, janela anterior de igual duração (imediatamente antes)."""
+    """Mesmo recorte, janela anterior de igual duração."""
     period = spec.get("period", ())
     if not (isinstance(period, (tuple, list)) and len(period) == 2):
         return df.iloc[0:0].copy()
@@ -71,7 +71,6 @@ def previous_period(df, spec):
 
 
 def import_state_from_url(df):
-    """Primeira execução: lê filtros da URL, se existirem e forem válidos."""
     if st.session_state.get("_url_imported"):
         return
     st.session_state["_url_imported"] = True
@@ -84,7 +83,12 @@ def import_state_from_url(df):
         return
 
     valid = df["Data da tarefa"].dropna()
-    if "p" in payload and isinstance(payload["p"], list) and len(payload["p"]) == 2 and not valid.empty:
+    if (
+        "p" in payload
+        and isinstance(payload["p"], list)
+        and len(payload["p"]) == 2
+        and not valid.empty
+    ):
         try:
             start = pd.Timestamp(payload["p"][0]).date()
             end = pd.Timestamp(payload["p"][1]).date()
@@ -118,7 +122,9 @@ def export_state_to_url(spec):
         v = spec.get(col)
         if v:
             payload[col] = list(v)
-    st.query_params["f"] = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    st.query_params["f"] = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    )
 
 
 def render_sidebar_filters(df):
@@ -128,7 +134,7 @@ def render_sidebar_filters(df):
 
         spec = {}
 
-        # 1. Tipo primeiro
+        # 1. Tipo
         spec["Tipo"] = st.selectbox(
             "Tipo de manutenção",
             ["Todas", "Preventiva", "Corretiva"],
@@ -137,10 +143,14 @@ def render_sidebar_filters(df):
 
         # 2. Dimensões
         labels = dict(zip(df["Máquina"], df["Seleção da máquina"]))
+
         for column in COLUMNS:
             options = [
-                v for v in df[column].dropna().unique() if str(v).strip()
+                value
+                for value in df[column].dropna().unique()
+                if str(value).strip()
             ]
+
             if column == "Máquina":
                 options = sorted(
                     options,
@@ -168,7 +178,7 @@ def render_sidebar_filters(df):
                 **kwargs,
             )
 
-        # 3. Período por último
+        # 3. Período (por último)
         st.divider()
         valid_dates = df["Data da tarefa"].dropna()
         if valid_dates.empty:
@@ -189,7 +199,9 @@ def render_sidebar_filters(df):
         st.divider()
         cols = st.columns(2)
         cols[0].button(
-            "🧹 Limpar", on_click=reset_dashboard, use_container_width=True
+            "🧹 Limpar",
+            on_click=reset_dashboard,
+            use_container_width=True,
         )
         if cols[1].button("🔄 Atualizar", use_container_width=True):
             st.cache_data.clear()
@@ -200,8 +212,15 @@ def render_sidebar_filters(df):
         and len(period) == 2
         and period[0] <= period[1]
     )
+
     additional = spec["Tipo"] != "Todas" or any(
-        spec.get(c) for c in COLUMNS
+        spec.get(column) for column in COLUMNS
     )
-    cut = apply_filters(df, spec) if valid_period else df.iloc[0:0].copy()
+
+    cut = (
+        apply_filters(df, spec)
+        if valid_period
+        else df.iloc[0:0].copy()
+    )
+
     return cut, valid_period, additional, spec
