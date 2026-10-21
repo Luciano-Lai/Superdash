@@ -3,33 +3,29 @@ import os
 import streamlit as st
 import pandas as pd
 
-# 1. Configuração de caminhos para a pasta 'views' (no plural)
+# 1. Configuração prioritária dos caminhos no sys.path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIEWS_DIR = os.path.join(BASE_DIR, "views")
 
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+# O diretório RAIZ DEVE ser o primeiro (index 0) para que 'from ui import ...' encontre /ui.py
+if BASE_DIR in sys.path:
+    sys.path.remove(BASE_DIR)
+sys.path.insert(0, BASE_DIR)
+
 if VIEWS_DIR not in sys.path:
-    sys.path.insert(0, VIEWS_DIR)
+    sys.path.append(VIEWS_DIR)
 
 # 2. Importações dos módulos base do SuperDash
 from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
 
-# 3. Importação das visões originais da pasta views
-try:
-    import views.monitoramento as v_mon
-    import views.maquinas as v_maq
-    import views.corretivas as v_corr
-    import views.clientes_regioes as v_cli
-    import views.analise_tarefas as v_tar
-except ModuleNotFoundError:
-    import monitoramento as v_mon
-    import maquinas as v_maq
-    import corretivas as v_corr
-    import clientes_regioes as v_cli
-    import analise_tarefas as v_tar
+# 3. Importação das visões mantendo o pacote 'views' visível para os scripts internos
+import views.monitoramento as v_mon
+import views.maquinas as v_maq
+import views.corretivas as v_corr
+import views.clientes_regioes as v_cli
+import views.analise_tarefas as v_tar
 
 # 4. Configuração da página executiva
 st.set_page_config(
@@ -174,7 +170,7 @@ with c4:
 
 st.write("")
 
-# Helper seguro para execução das funções públicas dos módulos
+# Helper para executar a função pública de renderização de cada módulo
 def render_view_module(mod, df):
     for attr in dir(mod):
         if attr.startswith("render") or attr == "main":
