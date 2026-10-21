@@ -3,6 +3,7 @@ import math
 import unicodedata
 from html import escape
 
+import pandas as pd
 import streamlit as st
 
 from charts import (
@@ -213,6 +214,35 @@ def norm_header(value):
     )
 
 
+def _comparison_window_label(spec):
+    period = spec.get("period")
+    if not (isinstance(period, (tuple, list)) and len(period) == 2):
+        return None
+    try:
+        start, end = map(pd.Timestamp, period)
+    except Exception:
+        return None
+    duration = (end - start).days + 1
+    if duration <= 0:
+        return None
+    prev_start = (start - pd.Timedelta(days=duration)).date()
+    prev_end = (start - pd.Timedelta(days=1)).date()
+    return prev_start, prev_end, duration
+
+
+def _coverage_pct(prev_df, window):
+    if prev_df is None or prev_df.empty or window is None:
+        return 0.0
+    _, _, duration = window
+    if duration <= 0:
+        return 0.0
+    actual = (
+        prev_df["Data da tarefa"].max()
+        - prev_df["Data da tarefa"].min()
+    ).days + 1
+    return min(actual / duration, 1.0) * 100
+
+
 def generate_insights(df, prev_df, spec):
     if df is None or df.empty:
         return []
@@ -398,8 +428,49 @@ def registry(c, name, fig, kpis):
     )
 
 
+def _render_comparison_legend(c, deltas, reasons):
+    window = _comparison_window_label(c["spec"])
+    if not window:
+        return
+    ps, pe, dur = window
+
+    if deltas:
+        st.caption(
+            f"Δ = variação vs **{ps:%d/%m/%Y}** a **{pe:%d/%m/%Y}** "
+            f"({dur} dias, mesma duração do recorte atual)."
+        )
+    else:
+        st.caption(
+            f"💡 Nenhum KPI tem base de comparação. Período anterior "
+            f"esperado: **{ps:%d/%m/%Y}** a **{pe:%d/%m/%Y}** ({dur} dias). "
+            f"Reduza a **data inicial** no filtro Período para habilitar o Δ."
+        )
+
+    if reasons:
+        with st.expander("🔍 Diagnóstico do delta", expanded=False):
+            period = c["spec"]["period"]
+            start_atual, end_atual = pd.Timestamp(period[0]), pd.Timestamp(period[1])
+            prev_len = len(c["prev"]) if c.get("prev") is not None else 0
+            st.markdown(
+                f"- **Recorte atual:** {start_atual:%d/%m/%Y} → {end_atual:%d/%m/%Y}\n"
+                f"- **Período anterior esperado:** {ps:%d/%m/%Y} → {pe:%d/%m/%Y} ({dur} dias)\n"
+                f"- **Tarefas no período anterior:** {prev_len}\n"
+                f"- **Motivos de ausência de Δ:** `{reasons}`\n"
+                f"- **Deltas calculados para:** `{list(deltas.keys())}`"
+            )
+
+    coverage = _coverage_pct(c.get("prev"), window)
+    if deltas and coverage < 70:
+        st.caption(
+            f"⚠️ O período anterior tem só ~{coverage:.0f}% de cobertura "
+            f"({coverage:.0f}% dos {dur} dias). KPIs de contagem podem "
+            f"ficar distorcidos. Percentuais (% preventivas e "
+            f"% corretivas) não são afetados."
+        )
+
+
 def configuration(c, kpi_options, chart_options):
-    values, deltas, previous = calculate_kpis_with_delta(
+    values, deltas, previous, reasons = calculate_kpis_with_delta(
         c["df"], c.get("prev")
     )
     series = compute_kpi_series(
@@ -498,6 +569,7 @@ def configuration(c, kpi_options, chart_options):
         values=values,
         deltas=deltas,
         previous=previous,
+        reasons=reasons,
         series=series,
         kpis=selected_kpis,
         selected=selected if selected_kpis else [],
@@ -510,13 +582,9 @@ def configuration(c, kpi_options, chart_options):
         render_kpi_cards(
             selected_kpis, values,
             deltas=deltas, series=series, previous=previous,
+            reasons=reasons,
         )
-        if not deltas and c.get("prev") is not None and c["prev"].empty:
-            st.caption(
-                "💡 Nenhum indicador tem período anterior para comparar. "
-                "Reduza a **data inicial** no filtro Período para ver a "
-                "variação vs o período imediatamente anterior."
-            )
+        _render_comparison_legend(c, deltas, reasons)
     else:
         st.info(
             "Selecione indicadores para habilitar as análises desta página."
