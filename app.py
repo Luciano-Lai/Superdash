@@ -7,7 +7,7 @@ from data_loader import load_and_normalize_data
 from filters import render_sidebar_filters
 from kpis import calculate_executive_kpis
 
-# 1. Configuração da página e aplicação de estilo executivo no topo
+# 1. Configuração da página
 st.set_page_config(
     page_title="Painel Executivo de Manutenção",
     page_icon="📊",
@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Injeção do CSS exclusivo para a Primeira Parte (Header e Cards Executivos)
+# 2. Injeção de CSS para o Cabeçalho e Cards Executivos do Topo
 st.markdown("""
     <style>
         /* Cabeçalho Executivo em tom Navy */
@@ -89,15 +89,20 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Carregamento resiliente dos dados
+# 3. Carregamento dos dados
 df_raw = load_and_normalize_data()
 
 if df_raw.empty:
     st.error("⚠️ Não foi possível carregar os dados. Verifique a conexão com o Google Sheets.")
     st.stop()
 
-# 4. Filtros da Barra Lateral
-df_filtered, is_date_valid, has_additional_filter = render_sidebar_filters(df_raw)
+# 4. TRATAMENTO SEGURO DO RETORNO DE FILTROS (EVITA VALUEERROR)
+filter_output = render_sidebar_filters(df_raw)
+
+if isinstance(filter_output, tuple):
+    df_filtered = filter_output[0]
+else:
+    df_filtered = filter_output
 
 # --- PRIMEIRA PARTE: CABEÇALHO E CARDS EXECUTIVOS ---
 
