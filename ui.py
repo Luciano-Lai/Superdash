@@ -931,3 +931,553 @@ def concentration(c, column, title, associated, kind=None, drilldown=()):
     )
 
 
+def detail_columns(columns):
+    markers = {
+        "codigo do patrimonio", "codigo de patrimonio",
+        "codigo patrimonio", "cod. patrimonio", "cod patrimonio",
+    }
+    cutoff = next(
+        (
+            i for i, col in enumerate(columns)
+            if norm_header(col) in markers
+        ),
+        None,
+    )
+    if cutoff is not None:
+        shown = [
+            col for col in columns[:cutoff]
+            if col not in {"Rótulo da máquina", "Seleção da máquina"}
+        ]
+    else:
+        preferred = [
+            "Data da tarefa", "Nome da máquina", "Máquina", "Tipo",
+            "Técnico", "Cliente", "Cidade", "Região", "Estado",
+            "Problema", "Tarefa", "Peça", "Observações",
+        ]
+        shown = [col for col in preferred if col in columns]
+    if "Garantia" in columns and "Garantia" not in shown:
+        shown.append("Garantia")
+    return shown, cutoff is not None
+
+
+@st.fragment
+def details(c):
+    with st.expander("Detalhamento dos registros", expanded=False):
+        data = c["df"]
+        shown, found = detail_columns(list(data.columns))
+        if not found:
+            st.caption(
+                "Cabeçalho patrimonial não localizado; exibindo somente "
+                "as colunas essenciais."
+            )
+        prefix = c["key"] + "detail"
+        size = st.selectbox(
+            "Registros por página", [15, 25, 50, 100],
+            key=prefix + "size",
+        )
+        signature = hashlib.sha1(
+            (
+                repr(c["spec"]) + repr(data.index.tolist()) + str(size)
+            ).encode()
+        ).hexdigest()
+        pages = max(1, math.ceil(len(data) / size))
+        if st.session_state.get(prefix + "signature") != signature:
+            st.session_state[prefix + "page"] = 1
+            st.session_state[prefix + "signature"] = signature
+        if not 1 <= st.session_state.get(prefix + "page", 1) <= pages:
+            st.session_state[prefix + "page"] = 1
+        page = int(
+            st.number_input(
+                "Página", min_value=1, max_value=pages, step=1,
+                key=prefix + "page",
+            )
+        )
+        ordered = data.sort_values("Data da tarefa", ascending=False)
+        st.caption(f"{len(data)} registros • página {page} de {pages}")
+        st.dataframe(
+            ordered.iloc[(page - 1) * size:page * size][shown],
+            hide_index=True, use_container_width=True,
+        )
+
+
+def finish(c):
+    with c["export_slot"]:
+        st.markdown("#### Exportação PDF")
+        key = c["key"] + "pdf"
+        names = widget(
+            "multiselect", "Gráficos para o PDF",
+            key + "charts", options=list(c["figures"]), default=[],
+        )
+        allowed = (
+            set(c["values"]) if not names
+            else set().union(*(c["associations"][name] for name in names))
+        )
+        selected = widget(
+            "multiselect", "Indicadores para o PDF",
+            key + "kpis", options=[k for k in c["values"] if k in allowed],
+            default=[],
+        )
+        st.caption(
+            "Os indicadores exportados pertencem ao recorte da página. "
+            "Na comparação, os indicadores são do conjunto das máquinas."
+        )
+        count = widget(
+            "selectbox", "Gráficos por página", key + "count",
+            options=[1, 2, 3, 4],
+        )
+        if st.button(
+            "Gerar PDF", key=key + "generate",
+            disabled=not (names or selected),
+        ):
+            try:
+                pdf = generate_pdf_report(
+                    c["values"], selected,
+                    {name: c["figures"][name] for name in names},
+                    count,
+                )
+                st.download_button(
+                    "Baixar PDF", pdf,
+                    "painel_" + c["id"] + ".pdf",
+                    "application/pdf",
+                    key=key + "download",
+                )
+            except Exception as error:
+                st.error(
+                    "Não foi possível gerar o PDF. Confira o "
+                    "diagnóstico abaixo."
+                )
+                st.code(str(error))
+    details(c)
+
+
+def render_monitoramento():
+    c = context(
+        "monitoramento", "Monitoramento",
+        "Visão consolidada de volume, composição e corretivas.",
+    )
+    if c is None:
+        return
+    configuration(
+        c,
+        [
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Preventivas", "% Corretivas",
+            "Máquinas atendidas", "Técnicos envolvidos",
+        ],
+        [
+            "Evolução da operação",
+            "Composição das manutenções",
+            "Equipamentos com mais corretivas",
+            "Máquinas por classe ABC",
+        ],
+    )
+    if "Evolução da operação" in c["selected"]:
+        evolution(c, "Evolução da operação")
+    if "Composição das manutenções" in c["selected"]:
+        composition(c, "Preventivas × corretivas")
+    if "Equipamentos com mais corretivas" in c["selected"]:
+        ranking(
+            c, "Rótulo da máquina",
+            "Equipamentos com mais corretivas",
+            {"Corretivas", "Máquinas atendidas"}, "Corretiva",
+        )
+    if "Máquinas por classe ABC" in c["selected"]:
+        concentration(
+            c, "Rótulo da máquina",
+            "Máquinas por classe ABC — corretivas",
+            {"Corretivas", "Máquinas atendidas"}, "Corretiva",
+            ["Técnico", "Problema", "Tarefa"],
+        )
+    finish(c)
+
+
+def render_analise_tarefas():
+    c = context(
+        "analise_tarefas", "Análise de tarefas",
+        "Serviços executados, responsáveis e volume no período.",
+    )
+    if c is None:
+        return
+    configuration(
+        c,
+        [
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Preventivas", "% Corretivas",
+            "Técnicos envolvidos", "Máquinas atendidas",
+        ],
+        [
+            "Serviços executados",
+            "Ritmo dos atendimentos",
+            "Distribuição por responsável",
+            "Distribuição por equipamento",
+            "Concentração de tarefas por equipamento",
+            "Concentração de tarefas por responsável",
+        ],
+    )
+    if "Serviços executados" in c["selected"]:
+        ranking(
+            c, "Tarefa", "Serviços executados",
+            {"Total de tarefas", "Preventivas", "Corretivas"},
+        )
+    if "Ritmo dos atendimentos" in c["selected"]:
+        evolution(c, "Ritmo dos atendimentos")
+    if "Distribuição por responsável" in c["selected"]:
+        ranking(
+            c, "Técnico", "Tarefas por responsável",
+            {"Total de tarefas", "Técnicos envolvidos"},
+        )
+    if "Distribuição por equipamento" in c["selected"]:
+        ranking(
+            c, "Rótulo da máquina", "Tarefas por equipamento",
+            {"Total de tarefas", "Máquinas atendidas"},
+        )
+    if "Concentração de tarefas por equipamento" in c["selected"]:
+        concentration(
+            c, "Rótulo da máquina",
+            "Concentração de tarefas por equipamento",
+            {"Total de tarefas", "Máquinas atendidas"},
+            None, ["Tarefa", "Técnico"],
+        )
+    if "Concentração de tarefas por responsável" in c["selected"]:
+        concentration(
+            c, "Técnico",
+            "Concentração de tarefas por responsável",
+            {"Total de tarefas", "Técnicos envolvidos"},
+            None, ["Rótulo da máquina", "Tarefa"],
+        )
+    finish(c)
+
+
+def render_corretivas():
+    c = context(
+        "corretivas", "Corretivas",
+        "Falhas e tratamentos. Apenas tarefas corretivas.",
+        True,
+    )
+    if c is None:
+        return
+    configuration(
+        c,
+        [
+            "Corretivas", "Máquinas atendidas", "Técnicos envolvidos",
+            "Problema mais frequente", "Peça mais trocada",
+            "Corretivas em garantia", "Corretivas fora da garantia",
+        ],
+        [
+            "Falhas relatadas",
+            "Falhas por classe ABC",
+            "Peças utilizadas",
+            "Peças por classe ABC",
+            "Serviços corretivos",
+            "Equipamentos envolvidos",
+            "Evolução das corretivas",
+        ],
+    )
+    if "Falhas relatadas" in c["selected"]:
+        ranking(
+            c, "Problema", "Falhas relatadas",
+            {"Corretivas", "Problema mais frequente"},
+        )
+    if "Falhas por classe ABC" in c["selected"]:
+        concentration(
+            c, "Problema", "Falhas por classe ABC — corretivas",
+            {"Corretivas", "Problema mais frequente"}, "Corretiva",
+            ["Rótulo da máquina", "Técnico", "Tarefa"],
+        )
+    if "Peças utilizadas" in c["selected"]:
+        ranking(
+            c, "Peça", "Peças utilizadas",
+            {"Corretivas", "Peça mais trocada"},
+        )
+    if "Peças por classe ABC" in c["selected"]:
+        concentration(
+            c, "Peça", "Peças por classe ABC — corretivas",
+            {"Corretivas", "Peça mais trocada"}, "Corretiva",
+            ["Rótulo da máquina", "Problema", "Técnico"],
+        )
+    if "Serviços corretivos" in c["selected"]:
+        ranking(c, "Tarefa", "Serviços corretivos", {"Corretivas"})
+    if "Equipamentos envolvidos" in c["selected"]:
+        ranking(
+            c, "Rótulo da máquina",
+            "Equipamentos envolvidos em corretivas",
+            {"Corretivas", "Máquinas atendidas"},
+        )
+    if "Evolução das corretivas" in c["selected"]:
+        evolution(c, "Evolução das corretivas")
+    missing = (
+        c["df"]["Problema"].fillna("").astype(str).str.strip()
+        .isin(["", "Não informado", "Nao informado"])
+    )
+    if missing.any():
+        st.warning(
+            f"{int(missing.sum())} corretiva(s) sem problema válido. "
+            "Não entram no ranking de falhas."
+        )
+    finish(c)
+
+
+def render_clientes_regioes():
+    c = context(
+        "clientes_regioes", "Clientes e regiões",
+        "Distribuição dos atendimentos por cliente e localização.",
+    )
+    if c is None:
+        return
+    available = [
+        col for col in ["Cliente", "Estado", "Região", "Cidade"]
+        if c["df"][col].fillna("").astype(str).str.strip().ne("").any()
+    ]
+    if not available:
+        st.info(
+            "Não há cliente ou localização preenchidos neste recorte."
+        )
+    with st.expander(
+        "Refinar cliente e localização nesta página", expanded=False
+    ):
+        for col in available:
+            series = c["df"][col].fillna("").astype(str).str.strip()
+            options = sorted(
+                series.loc[series.ne("")].unique(), key=norm_header
+            )
+            chosen = widget(
+                "multiselect", col + " nesta página",
+                c["key"] + "local_" + col,
+                options=options, default=[],
+            )
+            if chosen:
+                c["df"] = c["df"].loc[series.isin(chosen)].copy()
+    if c["df"].empty:
+        st.info(
+            "Nenhum atendimento corresponde ao refinamento local."
+        )
+        return
+    dims = [
+        col for col in available
+        if c["df"][col].fillna("").astype(str).str.strip().ne("").any()
+    ]
+    options = (
+        ["Distribuição por " + col.lower() for col in dims]
+        + ["Composição local"]
+    )
+    configuration(
+        c,
+        [
+            "Total de tarefas", "Máquinas atendidas",
+            "Preventivas", "Corretivas", "% Corretivas",
+        ],
+        options,
+    )
+    for col in dims:
+        if "Distribuição por " + col.lower() in c["selected"]:
+            ranking(
+                c, col, "Atendimentos por " + col.lower(),
+                {"Total de tarefas", "Máquinas atendidas"},
+            )
+    if "Composição local" in c["selected"]:
+        composition(
+            c, "Composição das manutenções no recorte local"
+        )
+    finish(c)
+
+
+def render_maquinas():
+    c = context(
+        "maquinas", "Máquinas",
+        "Explore uma máquina ou compare até quatro no mesmo contexto.",
+    )
+    if c is None:
+        return
+    base = comparison_base(c["raw"], c["spec"])
+    if base.empty:
+        st.info("Nenhuma máquina com tarefas neste contexto.")
+        return
+    st.caption(
+        "As seleções abaixo substituem somente o filtro de máquina da "
+        "lateral. Os demais filtros continuam aplicados."
+    )
+    labels = dict(
+        zip(c["raw"]["Máquina"], c["raw"]["Seleção da máquina"])
+    )
+    codes = sorted(
+        base["Máquina"].unique(),
+        key=lambda code: (
+            norm_header(labels.get(code, code)), str(code),
+        ),
+    )
+    mode = widget(
+        "radio", "Modo de análise", c["key"] + "mode",
+        options=["Uma máquina", f"Comparar até {MAX_MACHINES} máquinas"],
+        horizontal=True,
+    )
+
+    def label_func(code):
+        return (
+            "Selecione uma máquina" if code is None
+            else labels.get(code, code)
+        )
+
+    if mode == "Uma máquina":
+        code_a = widget(
+            "selectbox", "Equipamento", c["key"] + "machine_a",
+            options=[None] + codes, format_func=label_func,
+        )
+        if code_a is None:
+            st.info("Escolha o equipamento para iniciar a análise.")
+            return
+        a = base.loc[base["Máquina"].eq(code_a)].copy()
+        c["df"] = a
+        c["effective_spec"] = {**c["spec"], "Máquina": [code_a]}
+        c["prev"] = previous_period(c["raw"], c["effective_spec"])
+        st.subheader(labels.get(code_a, code_a))
+        configuration(
+            c,
+            [
+                "Total de tarefas", "Preventivas", "Corretivas",
+                "% Corretivas", "Problema mais frequente",
+                "Peça mais trocada",
+            ],
+            [
+                "Histórico do equipamento",
+                "Composição do equipamento",
+                "Problemas do equipamento",
+                "Peças do equipamento",
+                "Serviços no equipamento",
+            ],
+        )
+        if "Histórico do equipamento" in c["selected"]:
+            evolution(c, "Histórico do equipamento")
+        if "Composição do equipamento" in c["selected"]:
+            composition(c, "Composição do equipamento")
+        if "Problemas do equipamento" in c["selected"]:
+            ranking(
+                c, "Problema", "Problemas do equipamento",
+                {"Corretivas", "Problema mais frequente"},
+            )
+        if "Peças do equipamento" in c["selected"]:
+            ranking(
+                c, "Peça", "Peças do equipamento",
+                {"Corretivas", "Peça mais trocada"},
+            )
+        if "Serviços no equipamento" in c["selected"]:
+            ranking(
+                c, "Tarefa", "Serviços no equipamento",
+                {"Total de tarefas"},
+            )
+    else:
+        selected_codes = widget(
+            "multiselect", "Máquinas para comparar",
+            c["key"] + "machines",
+            options=codes,
+            default=codes[:2] if len(codes) >= 2 else codes,
+            max_selections=MAX_MACHINES,
+            format_func=lambda code: labels.get(code, code),
+        )
+        if len(selected_codes) < 2:
+            st.info(
+                "Selecione pelo menos duas máquinas para comparar."
+            )
+            return
+        datasets = split_machines(base, selected_codes)
+        labels_list = [labels.get(code, code) for code in selected_codes]
+        c["df"] = base.loc[
+            base["Máquina"].isin(selected_codes)
+        ].copy()
+        c["effective_spec"] = {
+            **c["spec"], "Máquina": list(selected_codes),
+        }
+        c["prev"] = previous_period(c["raw"], c["effective_spec"])
+
+        configuration(
+            c,
+            [
+                "Total de tarefas", "Preventivas", "Corretivas",
+                "% Corretivas", "Máquinas atendidas",
+                "Problema mais frequente", "Peça mais trocada",
+            ],
+            [
+                "Volume comparativo",
+                "Evolução comparativa",
+                "Participação comparativa",
+                "Problemas comparativos",
+                "Peças comparativas",
+            ],
+        )
+        if c["kpis"]:
+            st.subheader("Indicadores individuais")
+            cols = st.columns(len(datasets))
+            for slot, data, label in zip(cols, datasets, labels_list):
+                with slot:
+                    st.markdown("#### " + label)
+                    stats = calculate_kpis(data)
+                    for name in c["kpis"]:
+                        st.metric(name, stats[name])
+        associated = {
+            "Total de tarefas", "Preventivas", "Corretivas",
+            "% Corretivas", "Máquinas atendidas",
+        }
+        if "Volume comparativo" in c["selected"]:
+            registry(
+                c, "Volume comparativo",
+                comparison_bars(datasets, labels_list), associated,
+            )
+        if "Evolução comparativa" in c["selected"]:
+            gran = widget(
+                "selectbox", "Agrupamento da comparação",
+                c["key"] + "compare_gran",
+                options=["Diária", "Semanal", "Mensal"],
+            )
+            registry(
+                c, "Evolução comparativa",
+                comparison_evolution(
+                    datasets, labels_list,
+                    c["spec"]["period"], gran,
+                ),
+                associated,
+            )
+        if "Participação comparativa" in c["selected"]:
+            registry(
+                c, "Participação comparativa",
+                comparison_share(datasets, labels_list), associated,
+            )
+        for name, column in [
+            ("Problemas comparativos", "Problema"),
+            ("Peças comparativas", "Peça"),
+        ]:
+            if name not in c["selected"]:
+                continue
+            all_cats = set()
+            for d in datasets:
+                all_cats |= set(category_counts(d, column).index)
+            if not all_cats:
+                st.info(
+                    "Sem ocorrências válidas para " + name + "."
+                )
+                continue
+            key = chart_key(c, name)
+            with st.expander("Top N — " + name):
+                own = widget(
+                    "checkbox", "Usar Top N individual",
+                    key + "own", value=False,
+                )
+                n = int(
+                    widget(
+                        "number_input", "Top N individual", key + "n",
+                        min_value=1, max_value=len(all_cats),
+                        value=min(10, len(all_cats)), step=1,
+                    )
+                    if own else c["top"]
+                )
+            registry(
+                c, name,
+                comparison_occurrences(
+                    datasets, labels_list, column, n
+                ),
+                {
+                    "Corretivas",
+                    "Problema mais frequente"
+                    if column == "Problema"
+                    else "Peça mais trocada",
+                },
+            )
+    finish(c)
