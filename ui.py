@@ -92,46 +92,37 @@ def apply_theme():
         """<style>
 .block-container{max-width:1550px;padding-top:2rem;padding-bottom:3rem}
 
+/* ---------- KPI CARD ---------- */
 .kpi-card{
-  background:#FFFFFF;
+  background:linear-gradient(180deg,#FFFFFF 0%,#F8FAFC 100%);
   border:1px solid #E2E8F0;
-  border-radius:12px;
-  padding:18px 20px 16px 22px;
-  box-shadow:0 1px 3px 0 rgba(0,0,0,0.04),0 1px 2px 0 rgba(0,0,0,0.02);
+  border-radius:14px;
+  padding:16px 20px 14px 20px;
+  box-shadow:0 1px 2px 0 rgba(0,0,0,0.04);
   margin-bottom:12px;
   transition:box-shadow .15s ease,transform .15s ease;
-  position:relative;
-  overflow:hidden;
-  min-height:150px;
+  min-height:170px;
+  display:flex;
+  flex-direction:column;
 }
 .kpi-card:hover{
-  box-shadow:0 4px 12px -2px rgba(0,0,0,0.10);
+  box-shadow:0 6px 16px -4px rgba(0,0,0,0.12);
   transform:translateY(-1px);
 }
-.kpi-card::before{
-  content:"";position:absolute;left:0;top:0;bottom:0;width:4px;
-}
-.kpi-border-primary::before{background:linear-gradient(180deg,#0284C7 0%,#0369A1 100%);}
-.kpi-border-success::before{background:linear-gradient(180deg,#16A34A 0%,#15803D 100%);}
-.kpi-border-warning::before{background:linear-gradient(180deg,#F59E0B 0%,#D97706 100%);}
-.kpi-border-danger::before {background:linear-gradient(180deg,#DC2626 0%,#B91C1C 100%);}
-.kpi-border-neutral::before{background:linear-gradient(180deg,#94A3B8 0%,#64748B 100%);}
+.kpi-border-primary{ border-left:5px solid #0284C7; }
+.kpi-border-success{ border-left:5px solid #16A34A; }
+.kpi-border-warning{ border-left:5px solid #F59E0B; }
+.kpi-border-danger { border-left:5px solid #DC2626; }
+.kpi-border-neutral{ border-left:5px solid #94A3B8; }
 
 .kpi-header{
   display:flex;align-items:center;justify-content:space-between;
-  gap:8px;margin-bottom:8px;
+  gap:8px;margin-bottom:10px;
 }
 .kpi-label{
   font-size:11px;font-weight:700;color:#64748B;
-  text-transform:uppercase;letter-spacing:.5px;
-  line-height:1.3;
-}
-.kpi-help{
-  display:inline-flex;align-items:center;justify-content:center;
-  width:16px;height:16px;border-radius:50%;
-  background:#E2E8F0;color:#64748B;
-  font-size:10px;font-weight:700;
-  cursor:help;user-select:none;flex-shrink:0;
+  text-transform:uppercase;letter-spacing:.6px;
+  line-height:1.35;cursor:help;
 }
 
 .kpi-value-row{
@@ -139,8 +130,8 @@ def apply_theme():
   margin-top:2px;
 }
 .kpi-value{
-  font-size:30px;font-weight:800;color:#0F172A;
-  line-height:1.05;letter-spacing:-.5px;
+  font-size:32px;font-weight:800;color:#0F172A;
+  line-height:1.05;letter-spacing:-0.8px;
 }
 .kpi-value-text{
   font-size:15px;font-weight:700;color:#0F172A;
@@ -149,18 +140,18 @@ def apply_theme():
 
 .kpi-delta{
   display:inline-flex;align-items:center;gap:2px;
-  font-size:12px;font-weight:700;
-  padding:2px 7px;border-radius:6px;
-  white-space:nowrap;
+  font-size:12px;font-weight:800;
+  padding:3px 8px;border-radius:6px;
+  white-space:nowrap;flex-shrink:0;
 }
 .kpi-delta-good{color:#15803D;background:#DCFCE7;}
 .kpi-delta-bad {color:#B91C1C;background:#FEE2E2;}
-.kpi-delta-flat{color:#475569;background:#F1F5F9;}
+.kpi-delta-flat{color:#64748B;background:#F1F5F9;font-weight:600;}
 
-.kpi-sparkline{margin:8px 0 2px 0;height:28px;}
+.kpi-sparkline{margin:4px 0 0 0;}
 
 .kpi-progress{
-  margin:12px 0 4px 0;height:6px;
+  margin:14px 0 6px 0;height:6px;
   background:#F1F5F9;border-radius:3px;overflow:hidden;
 }
 .kpi-progress-fill{
@@ -169,9 +160,11 @@ def apply_theme():
 }
 
 .kpi-footer{
-  font-size:11px;color:#94A3B8;margin-top:6px;line-height:1.4;
+  font-size:11px;color:#94A3B8;margin-top:auto;padding-top:8px;
+  line-height:1.4;
 }
 
+/* ---------- CHIPS / INSIGHTS ---------- */
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 16px 0}
 .chip{background:#fff;border:1px solid #DCE4EC;border-radius:999px;
       padding:4px 12px;font-size:.78rem;color:#172B4D;white-space:nowrap}
@@ -518,6 +511,12 @@ def configuration(c, kpi_options, chart_options):
             selected_kpis, values,
             deltas=deltas, series=series, previous=previous,
         )
+        if not deltas and c.get("prev") is not None and c["prev"].empty:
+            st.caption(
+                "💡 Nenhum indicador tem período anterior para comparar. "
+                "Reduza a **data inicial** no filtro Período para ver a "
+                "variação vs o período imediatamente anterior."
+            )
     else:
         st.info(
             "Selecione indicadores para habilitar as análises desta página."
@@ -528,6 +527,8 @@ def configuration(c, kpi_options, chart_options):
 
 def evolution(c, name="Evolução no período"):
     key = chart_key(c, name)
+    prev_available = c.get("prev") is not None and not c["prev"].empty
+
     left, mid, right = st.columns(3)
     with left:
         gran = widget(
@@ -540,12 +541,25 @@ def evolution(c, name="Evolução no período"):
             options=["Barras", "Linha", "Barras + linha acumulada"],
         )
     with right:
-        compare = widget(
-            "checkbox", "Sobrepor período anterior",
-            key + "cmp", value=True,
-        )
+        if prev_available:
+            compare = widget(
+                "checkbox",
+                "Comparar com período anterior",
+                key + "cmp",
+                value=True,
+                help=(
+                    "Sobreponha o período anterior (mesma duração) como "
+                    "linha tracejada cinza. Este controle afeta apenas "
+                    "este gráfico — os cards de KPI calculam o delta "
+                    "independentemente."
+                ),
+            )
+        else:
+            compare = False
+            st.markdown("**Comparação**")
+            st.caption("sem período anterior")
 
-    prev = c.get("prev") if compare else None
+    prev = c.get("prev") if compare and prev_available else None
     fig = render_evolution_chart(
         c["df"], gran, visual, c["spec"]["period"], prev,
     )
@@ -556,6 +570,11 @@ def evolution(c, name="Evolução no período"):
             "% Preventivas", "% Corretivas",
         },
     )
+    if not prev_available:
+        st.caption(
+            "💡 Para comparar com um período anterior, reduza a "
+            "**data inicial** no filtro Período da lateral."
+        )
 
 
 def ranking(c, column, title, associated, kind=None):
