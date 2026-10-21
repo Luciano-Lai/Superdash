@@ -85,7 +85,8 @@ def calculate_kpis(df):
         ),
         "% Corretivas": (
             f"{len(corr) / total * 100:.1f}%".replace(".", ",")
-            if total else "—"
+            if total
+            else "—"
         ),
         "Máquinas atendidas": df.loc[df["Máquina"].ne(""), "Máquina"].nunique(),
         "Técnicos envolvidos": df.loc[df["Técnico"].ne(""), "Técnico"].nunique(),
@@ -150,7 +151,7 @@ def compute_kpi_series(raw, effective_spec, buckets=6):
     return series
 
 
-def _sparkline_svg(values, color="#0284C7", height=48):
+def _sparkline_svg(values, color="#0284C7", height=44):
     numeric = [
         float(v) for v in values
         if isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -172,17 +173,18 @@ def _sparkline_svg(values, color="#0284C7", height=48):
 
     poly = " ".join(points)
     area = f"0,{h} {poly} {w},{h}"
+    grad_id = f"sg{abs(hash(tuple(numeric)))%100000}"
 
     return (
         f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
-        f'style="width:100%;height:{h}px;display:block;margin:6px 0 0 0">'
+        f'style="width:100%;height:{h}px;display:block;margin:4px 0 0 0">'
         f'<defs>'
-        f'<linearGradient id="sg{id(values)}" x1="0" y1="0" x2="0" y2="1">'
+        f'<linearGradient id="{grad_id}" x1="0" y1="0" x2="0" y2="1">'
         f'<stop offset="0%" stop-color="{color}" stop-opacity="0.28"/>'
         f'<stop offset="100%" stop-color="{color}" stop-opacity="0"/>'
         f'</linearGradient>'
         f'</defs>'
-        f'<polygon points="{area}" fill="url(#sg{id(values)})"/>'
+        f'<polygon points="{area}" fill="url(#{grad_id})"/>'
         f'<polyline points="{poly}" fill="none" stroke="{color}" '
         f'stroke-width="2.2" vector-effect="non-scaling-stroke" '
         f'stroke-linejoin="round" stroke-linecap="round"/>'
@@ -192,7 +194,7 @@ def _sparkline_svg(values, color="#0284C7", height=48):
 
 def _border_and_delta_class(name, delta):
     if delta is None:
-        return "kpi-border-primary", None
+        return "kpi-border-primary", "kpi-delta-flat"
     if name in KPI_BAD_WHEN_UP:
         if delta > 0:
             return "kpi-border-danger", "kpi-delta-bad"
@@ -233,14 +235,24 @@ def build_kpi_card(name, values, deltas, series, previous):
         val_class = "kpi-value"
         display = str(value)
 
+    # --- Delta no canto superior direito ---
     delta_html = ""
-    if delta is not None and name not in TEXT_KPIS:
-        arrow = "▲" if delta > 0 else "▼" if delta < 0 else "≡"
-        d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
-        delta_html = (
-            f'<span class="kpi-delta {delta_class}">'
-            f'{arrow} {d_fmt}</span>'
-        )
+    if name not in TEXT_KPIS:
+        if delta is not None:
+            arrow = "▲" if delta > 0 else "▼" if delta < 0 else "≡"
+            d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
+            delta_html = (
+                f'<span class="kpi-delta {delta_class}" '
+                f'title="Variação vs período anterior de mesma duração">'
+                f'{arrow} {d_fmt}</span>'
+            )
+        else:
+            delta_html = (
+                '<span class="kpi-delta kpi-delta-flat" '
+                'title="Sem período anterior para comparar. '
+                'Reduza a data inicial no filtro Período.">'
+                'sem base</span>'
+            )
 
     viz_html = ""
     if name in PERCENT_KPIS:
@@ -286,21 +298,19 @@ def build_kpi_card(name, values, deltas, series, previous):
 
     icon = KPI_ICONS.get(name, "")
     help_text = TOOLTIPS.get(name, "")
-    help_html = (
-        f'<span class="kpi-help" '
-        f'title="{escape(help_text, quote=True)}">?</span>'
+    help_attr = (
+        f' title="{escape(help_text, quote=True)}"'
         if help_text else ""
     )
 
     return (
         f'<div class="kpi-card {border}">'
         f'<div class="kpi-header">'
-        f'<span class="kpi-label">{icon} {escape(name)}</span>'
-        f'{help_html}'
+        f'<span class="kpi-label"{help_attr}>{icon} {escape(name)}</span>'
+        f'{delta_html}'
         f'</div>'
         f'<div class="kpi-value-row">'
         f'<span class="{val_class}">{escape(display)}</span>'
-        f'{delta_html}'
         f'</div>'
         f'{viz_html}'
         f'<div class="kpi-footer">{escape(footer)}</div>'
