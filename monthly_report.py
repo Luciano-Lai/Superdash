@@ -15,7 +15,6 @@ MESES = [
 
 
 def month_bounds(year, month):
-    """Retorna (primeiro_dia, ultimo_dia, parcial)."""
     primeiro = date(year, month, 1)
     prox = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
     ultimo = prox - pd.Timedelta(days=1)
@@ -45,7 +44,9 @@ def build_monthly_report(registry, tasks, client, year, month, ambiente=None):
     # ---------- Preventivas ----------
     prev = period_tasks[period_tasks["Tipo"].eq("Preventiva")].copy()
     if prev.empty:
-        last_prev = pd.DataFrame(columns=["Máquina", "Última preventiva", "Técnicos"])
+        last_prev = pd.DataFrame(
+            columns=["Máquina", "Última preventiva", "Técnicos"]
+        )
     else:
         agg = (
             prev.sort_values("Data da tarefa", ascending=False)
@@ -192,6 +193,48 @@ def render_corretivas(df):
         st.divider()
 
 
+def _pick_client(registry):
+    """
+    Escolhe o cliente conforme o cadastro atual:
+      - 0 clientes distintos → None (bloqueio removido, todos)
+      - 1 cliente           → usa o valor, sem selectbox
+      - 2+ clientes         → selectbox com 'Todos os clientes' como default
+    """
+    clientes = sorted({c for c in registry["Cliente"].tolist() if c})
+    if not clientes:
+        st.caption(
+            "Cliente: não cadastrado na base atual. "
+            "O relatório considera todas as máquinas do cadastro."
+        )
+        return None
+    if len(clientes) == 1:
+        st.caption(f"Cliente: **{clientes[0]}**")
+        return clientes[0]
+
+    opcoes = ["Todos os clientes"] + clientes
+    escolha = st.selectbox("Cliente", opcoes, key="resumo_cliente")
+    return None if escolha == "Todos os clientes" else escolha
+
+
+def _pick_ambiente(registry, client):
+    """Mesma lógica do cliente, aplicada ao Ambiente PMOC."""
+    base = registry.copy()
+    if client:
+        base = base[base["Cliente"].eq(client)]
+    ambientes = sorted({a for a in base["Ambiente PMOC"].tolist() if a})
+
+    if not ambientes:
+        return None
+    if len(ambientes) == 1:
+        return ambientes[0]
+
+    opcoes = ["Todos os ambientes"] + ambientes
+    escolha = st.selectbox(
+        "Unidade ou ambiente", opcoes, key="resumo_ambiente",
+    )
+    return None if escolha == "Todos os ambientes" else escolha
+
+
 def render_resumo_mensal():
     st.title("Resumo mensal")
     st.caption(
@@ -209,21 +252,11 @@ def render_resumo_mensal():
         st.info("O cadastro de máquinas (Dados) está vazio.")
         return
 
-    clientes = sorted(
-        {c for c in registry["Cliente"].tolist() if c}
-    )
-    if not clientes:
-        st.warning(
-            "Nenhum cliente cadastrado na aba Dados. "
-            "Preencha a coluna Cliente para usar o Resumo mensal."
-        )
-        return
-
     hoje = date.today()
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
 
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        cliente = st.selectbox("Cliente", clientes, key="resumo_cliente")
+        cliente = _pick_client(registry)
     with col2:
         mes_nome = st.selectbox(
             "Mês", MESES, index=hoje.month - 1, key="resumo_mes",
@@ -232,26 +265,21 @@ def render_resumo_mensal():
     with col3:
         anos = sorted({hoje.year - 1, hoje.year}, reverse=True)
         ano = st.selectbox("Ano", anos, key="resumo_ano")
-    with col4:
-        ambientes = sorted({
-            a for a in registry.loc[
-                registry["Cliente"].eq(cliente), "Ambiente PMOC"
-            ].tolist() if a
-        })
-        opts = ["Todos os ambientes"] + ambientes
-        ambiente_sel = st.selectbox(
-            "Unidade ou ambiente", opts, key="resumo_ambiente",
-        )
-        ambiente = None if ambiente_sel == "Todos os ambientes" else ambiente_sel
 
-    report = build_monthly_report(registry, tasks, cliente, ano, mes, ambiente)
+    ambiente = _pick_ambiente(registry, cliente)
+
+    report = build_monthly_report(
+        registry, tasks, cliente, ano, mes, ambiente,
+    )
 
     if report["machines"].empty:
         st.warning("Nenhuma máquina cadastrada com esse filtro.")
         return
 
     start, end = report["periodo"]
-    titulo = f"**{cliente}** — {mes_nome}/{ano}"
+    titulo = f"**{mes_nome}/{ano}**"
+    if cliente:
+        titulo = f"**{cliente}** — {mes_nome}/{ano}"
     if ambiente:
         titulo += f" — {ambiente}"
     st.markdown(titulo)
@@ -284,10 +312,13 @@ def render_resumo_mensal():
     if st.button("Gerar PDF do resumo mensal", key="resumo_pdf_btn"):
         try:
             pdf = generate_monthly_pdf(report)
+            sufixo = f"{ano}_{mes:02d}"
+            if cliente:
+                sufixo = cliente + "_" + sufixo
             st.download_button(
                 "Baixar PDF",
                 pdf,
-                f"resumo_{cliente}_{ano}_{mes:02d}.pdf".replace(" ", "_"),
+                f"resumo_{sufixo}.pdf".replace(" ", "_"),
                 "application/pdf",
                 key="resumo_pdf_download",
             )
