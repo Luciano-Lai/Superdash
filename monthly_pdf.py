@@ -22,6 +22,8 @@ MESES = [
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ]
 
+SEM_PREVENTIVA = "Sem registro de manutenção preventiva neste mês."
+
 COR_HEADER = colors.HexColor("#F0F4F8")
 COR_GRID = colors.HexColor("#DCE4EC")
 
@@ -96,24 +98,22 @@ def generate_monthly_pdf(report):
     else:
         header = [
             "Código interno", "Ambiente PMOC",
-            "Última preventiva", "Técnico(s)", "Situação",
+            "Última preventiva no mês", "Técnico(s)",
         ]
         rows = [[Paragraph(h, styles["Normal"]) for h in header]]
         for _, row in prev.iterrows():
             ult = row.get("Última preventiva")
-            ult_str = f"{ult:%d/%m/%Y}" if pd.notna(ult) else "—"
-            situacao = (
-                "Sem registro de manutenção preventiva neste mês."
-                if ult_str == "—" else ""
+            ult_str = (
+                f"{ult:%d/%m/%Y}" if pd.notna(ult)
+                else SEM_PREVENTIVA
             )
             rows.append([
                 _para(row.get("Identificação"), styles["Normal"]),
                 _para(row.get("Ambiente PMOC"), styles["Normal"]),
                 _para(ult_str, styles["Normal"]),
                 _para(row.get("Técnicos"), styles["Normal"]),
-                _para(situacao, styles["Normal"]),
             ])
-        story.append(_table(rows, [45 * mm, 35 * mm, 30 * mm, 40 * mm, 30 * mm]))
+        story.append(_table(rows, [45 * mm, 35 * mm, 60 * mm, 40 * mm]))
 
     # ----- Corretivas -----
     story.append(PageBreak())
