@@ -24,6 +24,7 @@ pages = [
     st.Page("views/analise_tarefas.py",  title="Operação",            icon="⚙️"),
     st.Page("views/maquinas.py",         title="Equipamentos",        icon="❄️"),
     st.Page("views/clientes_regioes.py", title="Clientes e regiões",  icon="🏢"),
+    st.Page("views/resumo_mensal.py",    title="Resumo mensal",       icon="📅"),
 ]
 page = st.navigation(pages, position="top")
 
