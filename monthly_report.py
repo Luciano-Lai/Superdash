@@ -96,6 +96,21 @@ def build_monthly_report(registry, tasks, client, year, month, ambiente=None):
     }
 
 
+def available_periods(tasks, machines):
+    """Lista de 'YYYY-MM' com pelo menos uma tarefa para essas máquinas."""
+    if tasks.empty or machines.empty:
+        return []
+    codes = set(machines["Máquina"])
+    filtered = tasks[
+        tasks["Data da tarefa"].notna()
+        & tasks["Máquina"].isin(codes)
+    ]
+    if filtered.empty:
+        return []
+    keys = filtered["Data da tarefa"].dt.strftime("%Y-%m").unique().tolist()
+    return sorted(keys, reverse=True)
+
+
 def render_preventivas(df):
     if df.empty:
         st.info("Nenhuma máquina no cadastro para o filtro selecionado.")
@@ -214,7 +229,10 @@ def _pick_client(registry):
         return clientes[0]
 
     opcoes = ["Todos os clientes"] + clientes
-    escolha = st.selectbox("Cliente", opcoes, key="resumo_cliente")
+    key = "resumo_cliente"
+    if key in st.session_state and st.session_state[key] not in opcoes:
+        st.session_state[key] = opcoes[0]
+    escolha = st.selectbox("Cliente", opcoes, key=key)
     return None if escolha == "Todos os clientes" else escolha
 
 
@@ -230,10 +248,46 @@ def _pick_ambiente(registry, client):
         return ambientes[0]
 
     opcoes = ["Todos os ambientes"] + ambientes
-    escolha = st.selectbox(
-        "Unidade ou ambiente", opcoes, key="resumo_ambiente",
-    )
+    key = "resumo_ambiente"
+    if key in st.session_state and st.session_state[key] not in opcoes:
+        st.session_state[key] = opcoes[0]
+    escolha = st.selectbox("Unidade ou ambiente", opcoes, key=key)
     return None if escolha == "Todos os ambientes" else escolha
+
+
+def _pick_competencia(tasks, registry, cliente, ambiente):
+    """
+    Selectbox único de Competência, restrito aos meses que têm pelo
+    menos uma tarefa (Master) para as máquinas do filtro atual.
+    Retorna (ano, mes, label) ou (None, None, None) se nada existir.
+    """
+    machines = registry.copy()
+    if cliente:
+        machines = machines[machines["Cliente"].eq(cliente)]
+    if ambiente:
+        machines = machines[machines["Ambiente PMOC"].eq(ambiente)]
+
+    periods = available_periods(tasks, machines)
+    if not periods:
+        return None, None, None
+
+    labels = {
+        p: f"{MESES[int(p[5:]) - 1]}/{p[:4]}" for p in periods
+    }
+    options = [labels[p] for p in periods]
+
+    if len(options) == 1:
+        st.caption(f"Competência: **{options[0]}**")
+        escolha = options[0]
+    else:
+        key = "resumo_competencia"
+        if key in st.session_state and st.session_state[key] not in options:
+            st.session_state[key] = options[0]
+        escolha = st.selectbox("Competência", options, key=key)
+
+    idx = options.index(escolha)
+    period_key = periods[idx]
+    return int(period_key[:4]), int(period_key[5:]), escolha
 
 
 def render_resumo_mensal():
@@ -253,21 +307,23 @@ def render_resumo_mensal():
         st.info("O cadastro de máquinas (Dados) está vazio.")
         return
 
-    hoje = date.today()
-
-    col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2 = st.columns([1, 1])
     with col1:
         cliente = _pick_client(registry)
     with col2:
-        mes_nome = st.selectbox(
-            "Mês", MESES, index=hoje.month - 1, key="resumo_mes",
-        )
-        mes = MESES.index(mes_nome) + 1
-    with col3:
-        anos = sorted({hoje.year - 1, hoje.year}, reverse=True)
-        ano = st.selectbox("Ano", anos, key="resumo_ano")
+        ambiente = _pick_ambiente(registry, cliente)
 
-    ambiente = _pick_ambiente(registry, cliente)
+    ano, mes, mes_nome = _pick_competencia(
+        tasks, registry, cliente, ambiente,
+    )
+
+    if ano is None:
+        st.warning(
+            "Nenhuma tarefa registrada para esse filtro. "
+            "Escolha outro cliente, outro ambiente ou verifique se a "
+            "planilha tem tarefas para essas máquinas."
+        )
+        return
 
     report = build_monthly_report(
         registry, tasks, cliente, ano, mes, ambiente,
@@ -278,15 +334,15 @@ def render_resumo_mensal():
         return
 
     start, end = report["periodo"]
-    titulo = f"**{mes_nome}/{ano}**"
+    titulo = f"**{mes_nome}**"
     if cliente:
-        titulo = f"**{cliente}** — {mes_nome}/{ano}"
+        titulo = f"**{cliente}** — {mes_nome}"
     if ambiente:
         titulo += f" — {ambiente}"
     st.markdown(titulo)
 
     chips = [
-        f'<span class="chip">Competência: {mes_nome}/{ano}</span>',
+        f'<span class="chip">Competência: {mes_nome}</span>',
         f'<span class="chip">Período: {start:%d/%m/%Y} a {end:%d/%m/%Y}</span>',
         f'<span class="chip">Situação: '
         f'{"Parcial — mês em andamento" if report["parcial"] else "Mês completo"}'
