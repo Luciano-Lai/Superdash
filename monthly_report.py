@@ -13,6 +13,8 @@ MESES = [
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ]
 
+SEM_PREVENTIVA = "Sem registro de manutenção preventiva neste mês."
+
 
 def month_bounds(year, month):
     primeiro = date(year, month, 1)
@@ -41,7 +43,6 @@ def build_monthly_report(registry, tasks, client, year, month, ambiente=None):
             & tasks["Data da tarefa"].dt.date.between(start, end)
         ].copy()
 
-    # ---------- Preventivas ----------
     prev = period_tasks[period_tasks["Tipo"].eq("Preventiva")].copy()
     if prev.empty:
         last_prev = pd.DataFrame(
@@ -73,7 +74,6 @@ def build_monthly_report(registry, tasks, client, year, month, ambiente=None):
         key=lambda s: s.str.normalize("NFKD").str.casefold(),
     ).reset_index(drop=True)
 
-    # ---------- Corretivas ----------
     corr = period_tasks[period_tasks["Tipo"].eq("Corretiva")].copy()
     if not corr.empty:
         corr = corr.merge(
@@ -103,18 +103,13 @@ def render_preventivas(df):
 
     display = df.copy()
     display["Última preventiva no mês"] = display["Última preventiva"].apply(
-        lambda d: f"{d:%d/%m/%Y}" if pd.notna(d) else "—"
+        lambda d: f"{d:%d/%m/%Y}" if pd.notna(d) else SEM_PREVENTIVA
     )
     display["Técnico(s)"] = display["Técnicos"].fillna("—")
-    display["Situação"] = display["Última preventiva no mês"].apply(
-        lambda v: "Sem registro de manutenção preventiva neste mês."
-        if v == "—"
-        else ""
-    )
 
     main = display[[
         "Identificação", "Ambiente PMOC",
-        "Última preventiva no mês", "Técnico(s)", "Situação",
+        "Última preventiva no mês", "Técnico(s)",
     ]].rename(columns={"Identificação": "Código interno"})
 
     st.dataframe(
@@ -124,10 +119,23 @@ def render_preventivas(df):
         column_config={
             "Código interno": st.column_config.TextColumn(width="medium"),
             "Ambiente PMOC": st.column_config.TextColumn(width="medium"),
-            "Última preventiva no mês": st.column_config.TextColumn(width="small"),
+            "Última preventiva no mês": st.column_config.TextColumn(
+                width="large",
+                help=(
+                    "Data da última preventiva no mês. Quando não há "
+                    "registro, mostra a mensagem de ausência."
+                ),
+            ),
             "Técnico(s)": st.column_config.TextColumn(width="medium"),
-            "Situação": st.column_config.TextColumn(width="large"),
         },
+    )
+
+    total = len(display)
+    sem_preventiva = int(display["Última preventiva"].isna().sum())
+    com_preventiva = total - sem_preventiva
+    st.caption(
+        f"{com_preventiva} de {total} máquinas com preventiva no mês "
+        f"• {sem_preventiva} sem registro."
     )
 
     with st.expander("Informações cadastrais", expanded=False):
@@ -194,12 +202,6 @@ def render_corretivas(df):
 
 
 def _pick_client(registry):
-    """
-    Escolhe o cliente conforme o cadastro atual:
-      - 0 clientes distintos → None (bloqueio removido, todos)
-      - 1 cliente           → usa o valor, sem selectbox
-      - 2+ clientes         → selectbox com 'Todos os clientes' como default
-    """
     clientes = sorted({c for c in registry["Cliente"].tolist() if c})
     if not clientes:
         st.caption(
@@ -217,7 +219,6 @@ def _pick_client(registry):
 
 
 def _pick_ambiente(registry, client):
-    """Mesma lógica do cliente, aplicada ao Ambiente PMOC."""
     base = registry.copy()
     if client:
         base = base[base["Cliente"].eq(client)]
