@@ -1034,6 +1034,7 @@ def finish(c):
                     c["values"], selected,
                     {name: c["figures"][name] for name in names},
                     count,
+                    deltas=c.get("deltas"),
                 )
                 st.download_button(
                     "Baixar PDF", pdf,
