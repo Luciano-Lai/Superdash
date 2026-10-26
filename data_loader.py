@@ -1,6 +1,8 @@
+import concurrent.futures
 import csv
 import io
 import re
+import time
 import unicodedata
 
 import pandas as pd
@@ -10,6 +12,9 @@ import streamlit as st
 BASE = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQhMjvBLcrdrgNIqCsHZOd3ZUb63abkzKPYYfOU7qFb45ljZmO2_UmerQjWWWxNvR4RfW_XElnCgHXf/pub"
 URL_ABA_MASTER = BASE + "?gid=1187149031&single=true&output=csv"
 URL_ABA_DADOS = BASE + "?gid=152468513&single=true&output=csv"
+
+CACHE_TTL_SECONDS = 300
+MAX_PARALLEL_WORKERS = 8
 
 
 def clean(value):
@@ -38,7 +43,6 @@ ALIASES = {
     "cidade": "Cidade",
     "estado": "Estado",
     "regiao": "Região",
-    # Novos aliases para o Resumo mensal
     "codigo interno": "Código Interno",
     "ambiente pmoc": "Ambiente PMOC",
     "unidade": "Unidade",
@@ -77,8 +81,8 @@ def parse_csv(text, sheet):
     return pd.DataFrame(records, columns=names)
 
 
-def read_sheet(url, sheet):
-    response = requests.get(url, timeout=40)
+def read_sheet(url, sheet, timeout=40):
+    response = requests.get(url, timeout=timeout)
     response.raise_for_status()
     try:
         text = response.content.decode("utf-8-sig")
@@ -94,8 +98,7 @@ def read_sheet(url, sheet):
 def normalize_tables(master, machines):
     """
     Visão das páginas analíticas — parte da Master (tarefas).
-    Máquinas sem tarefa NÃO aparecem. Mantida intacta para não
-    afetar Visão geral, Corretivas, Operação, Equipamentos, Clientes.
+    Máquinas sem tarefa NÃO aparecem.
     """
     required = {"Máquina", "Tipo", "Data da tarefa", "Técnico"}
     missing = required - set(master.columns)
@@ -146,10 +149,7 @@ def normalize_tables(master, machines):
 def normalize_registry(machines):
     """
     Cadastro de máquinas como base independente — parte de Dados.
-
-    Preserva TODAS as máquinas, inclusive as que nunca tiveram
-    tarefa. É a base do Resumo mensal, que inverte a lógica das
-    páginas analíticas (lá Master é base, aqui Dados é base).
+    Preserva TODAS as máquinas, inclusive as que nunca tiveram tarefa.
     """
     machines = machines.copy()
     for column in machines.columns:
@@ -167,13 +167,11 @@ def normalize_registry(machines):
             machines[column] = ""
         machines[column] = machines[column].map(clean)
 
-    # Identificação principal: Código Interno, com fallback para Nome ou código
     ident = machines["Código Interno"].where(machines["Código Interno"].ne(""), "")
     ident = ident.where(ident.ne(""), machines["Equipamento"])
     ident = ident.where(ident.ne(""), machines["Máquina"])
     machines["Identificação"] = ident
 
-    # Desambiguação se o Código Interno repetir dentro do cadastro
     dup = machines["Identificação"].duplicated(keep=False) & machines["Identificação"].ne("")
     machines.loc[dup, "Identificação"] = (
         machines.loc[dup, "Identificação"]
@@ -185,13 +183,185 @@ def normalize_registry(machines):
     return machines.reset_index(drop=True)
 
 
-@st.cache_data(ttl=60)
-def load_all():
-    """Retorna (tarefas, cadastro_de_máquinas). Uma leitura por cache."""
-    master = read_sheet(URL_ABA_MASTER, "Master")
-    machines = read_sheet(URL_ABA_DADOS, "Dados")
+# ---------- Configuração de clientes ----------
+
+def _get_secret(key, default=None):
+    try:
+        sheets = st.secrets.get("sheets", {})
+        return sheets.get(key, default)
+    except (FileNotFoundError, KeyError, AttributeError):
+        return default
+
+
+def read_consolidation():
+    """
+    Lê o CSV de consolidação de clientes, quando configurado em
+    .streamlit/secrets.toml:
+
+        [sheets]
+        consolidation_url = "https://.../consolidacao.csv"
+
+    Colunas esperadas (aliases tolerados):
+        cliente, url_master, url_dados
+        estado, cidade, região, bairro, estabelecimento (opcionais)
+    """
+    url = _get_secret("consolidation_url")
+    if not url:
+        return None
+
+    try:
+        response = requests.get(url, timeout=40)
+        response.raise_for_status()
+        text = response.content.decode("utf-8-sig")
+    except Exception:
+        return None
+
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows:
+        return None
+
+    header = [norm(v) for v in rows[0]]
+
+    def col(*aliases):
+        for alias in aliases:
+            key = norm(alias)
+            if key in header:
+                return header.index(key)
+        return None
+
+    idx = {
+        "cliente": col("cliente", "cliente_nome", "nome_cliente"),
+        "estado": col("estado", "uf"),
+        "cidade": col("cidade", "municipio", "município"),
+        "região": col("regiao", "região"),
+        "bairro": col("bairro"),
+        "estabelecimento": col("estabelecimento", "unidade", "local"),
+        "url_master": col("url_master", "link_master", "master"),
+        "url_dados": col("url_dados", "link_dados", "dados"),
+    }
+
+    if idx["url_master"] is None or idx["url_dados"] is None:
+        return None
+
+    def pick(row, key):
+        i = idx[key]
+        return clean(row[i]) if i is not None and i < len(row) else ""
+
+    configs = []
+    for row in rows[1:]:
+        master = pick(row, "url_master")
+        dados = pick(row, "url_dados")
+        if not master or not dados:
+            continue
+        configs.append({
+            "cliente": pick(row, "cliente"),
+            "estado": pick(row, "estado"),
+            "cidade": pick(row, "cidade"),
+            "região": pick(row, "região"),
+            "bairro": pick(row, "bairro"),
+            "estabelecimento": pick(row, "estabelecimento"),
+            "url_master": master,
+            "url_dados": dados,
+        })
+
+    return configs or None
+
+
+def _client_configs():
+    """
+    Lista de clientes a carregar.
+    Com consolidação configurada: lê do CSV.
+    Sem consolidação: cai na planilha única atual (retrocompatível).
+    """
+    consolidated = read_consolidation()
+    if consolidated:
+        return consolidated
+    return [{
+        "cliente": "",
+        "estado": "",
+        "cidade": "",
+        "região": "",
+        "bairro": "",
+        "estabelecimento": "",
+        "url_master": URL_ABA_MASTER,
+        "url_dados": URL_ABA_DADOS,
+    }]
+
+
+def _enrich_with_location(tasks, registry, config):
+    """Anexa metadados do cliente (vindos da consolidação) às duas bases."""
+    for column, key in [
+        ("Cliente", "cliente"),
+        ("Estado", "estado"),
+        ("Cidade", "cidade"),
+        ("Região", "região"),
+        ("Bairro", "bairro"),
+        ("Estabelecimento", "estabelecimento"),
+    ]:
+        value = config.get(key, "")
+        if not value:
+            continue
+        tasks[column] = value
+        registry[column] = value
+    return tasks, registry
+
+
+def _load_one_client(config):
+    """
+    Baixa e normaliza 1 cliente.
+    Master e Dados são buscados em paralelo (2 threads por cliente).
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f_master = ex.submit(read_sheet, config["url_master"], "Master")
+        f_dados = ex.submit(read_sheet, config["url_dados"], "Dados")
+        master = f_master.result()
+        machines = f_dados.result()
+
     tasks = normalize_tables(master.copy(), machines.copy())
     registry = normalize_registry(machines.copy())
+    return _enrich_with_location(tasks, registry, config)
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def _load_all_cached():
+    """
+    Retorna (tasks, registry, elapsed_seconds).
+    """
+    t0 = time.perf_counter()
+    configs = _client_configs()
+
+    if not configs:
+        return pd.DataFrame(), pd.DataFrame(), 0.0
+
+    if len(configs) == 1:
+        tasks, registry = _load_one_client(configs[0])
+    else:
+        workers = min(MAX_PARALLEL_WORKERS, len(configs))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(_load_one_client, c) for c in configs]
+            results = [f.result() for f in futures]
+
+        tasks_frames = [r[0] for r in results if r[0] is not None and not r[0].empty]
+        registry_frames = [r[1] for r in results if r[1] is not None and not r[1].empty]
+
+        tasks = (
+            pd.concat(tasks_frames, ignore_index=True)
+            if tasks_frames else pd.DataFrame()
+        )
+        registry = (
+            pd.concat(registry_frames, ignore_index=True)
+            if registry_frames else pd.DataFrame()
+        )
+
+    elapsed = time.perf_counter() - t0
+    return tasks, registry, round(elapsed, 2)
+
+
+def load_all():
+    """Retorna (tasks, registry). Grava tempo da última carga no estado."""
+    tasks, registry, elapsed = _load_all_cached()
+    if elapsed and elapsed > 0:
+        st.session_state["_last_load_seconds"] = elapsed
     return tasks, registry
 
 
