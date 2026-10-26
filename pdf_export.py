@@ -1,65 +1,136 @@
 import io
 from xml.sax.saxutils import escape
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak, KeepTogether
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    Image,
+    PageBreak,
+)
 
 
-def _figure_image(fig, target_width=1100):
-    height = int(fig.layout.height or 650)
-    image = fig.to_image(format="png", width=target_width, height=height, scale=1)
-    return image, target_width, height
+def _figure_bytes(fig, target_width=1100):
+    """Gera PNG dimensionado; retorna (bytes, altura/largura)."""
+    height_px = int(fig.layout.height or 650)
+    if height_px <= 0:
+        height_px = 650
+    width_px = target_width
+    buf = fig.to_image(
+        format="png", width=width_px, height=height_px, scale=1,
+    )
+    return buf, height_px / width_px  # aspect = h/w
 
 
-def generate_pdf_report(kpi_dict, selected_kpis, chart_figs=None, charts_per_page=1):
+def _fit_image(fig, max_w, max_h):
+    """
+    Gera um Image do reportlab que cabe em max_w × max_h.
+    Cálculo explícito de proporção — sem _restrictSize (API privada
+    do reportlab), sem KeepTogether (que força página única e quebra
+    quando a imagem encosta no limite).
+    """
+    max_w = float(max_w)
+    max_h = float(max_h)
+    if max_w <= 0 or max_h <= 0:
+        raise ValueError(
+            "Área da imagem inválida para o PDF (célula muito pequena)."
+        )
+    buf, aspect = _figure_bytes(fig)
+    if max_w * aspect <= max_h:
+        w = max_w
+        h = max_w * aspect
+    else:
+        h = max_h
+        w = max_h / aspect
+    return Image(io.BytesIO(buf), width=w, height=h)
+
+
+def generate_pdf_report(
+    kpi_dict, selected_kpis, chart_figs=None, charts_per_page=1,
+):
     if not 1 <= charts_per_page <= 4:
         raise ValueError("Escolha de 1 a 4 gráficos por página.")
     chart_figs = chart_figs or {}
     if not selected_kpis and not chart_figs:
         raise ValueError("Selecione ao menos um indicador ou gráfico.")
+
     buffer = io.BytesIO()
     page = landscape(A4)
-    width, height = page[0]-60, page[1]-60
-    doc = SimpleDocTemplate(buffer, pagesize=page, leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30)
+    width, height = page[0] - 60, page[1] - 60
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=page,
+        leftMargin=30,
+        rightMargin=30,
+        topMargin=30,
+        bottomMargin=30,
+    )
     styles = getSampleStyleSheet()
     story = []
+
+    # ---------- Cartões de KPI ----------
     if selected_kpis:
         cards = []
         for name in selected_kpis:
-            cards.append(Paragraph(escape(name) + "<br/><b>" + escape(str(kpi_dict.get(name, "—"))) + "</b>", styles["Normal"]))
+            cards.append(Paragraph(
+                escape(name)
+                + "<br/><b>"
+                + escape(str(kpi_dict.get(name, "—")))
+                + "</b>",
+                styles["Normal"],
+            ))
         for start in range(0, len(cards), 4):
-            row = cards[start:start+4]
-            row += [""] * (4-len(row))
-            table = Table([row], colWidths=[width/4]*4)
-            table.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F0F4F8")),
-                                       ("VALIGN", (0,0), (-1,-1), "TOP"),
-                                       ("BOX", (0,0), (-1,-1), .5, colors.HexColor("#DCE4EC")),
-                                       ("LEFTPADDING", (0,0), (-1,-1), 10),
-                                       ("TOPPADDING", (0,0), (-1,-1), 12),
-                                       ("BOTTOMPADDING", (0,0), (-1,-1), 12)]))
-            story.extend([table, Spacer(1,12)])
+            row = cards[start:start + 4]
+            row += [""] * (4 - len(row))
+            table = Table([row], colWidths=[width / 4] * 4)
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1),
+                 colors.HexColor("#F0F4F8")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BOX", (0, 0), (-1, -1), .5,
+                 colors.HexColor("#DCE4EC")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 12),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ]))
+            story.extend([table, Spacer(1, 12)])
         if chart_figs:
             story.append(PageBreak())
+
+    # ---------- Gráficos ----------
     entries = list(chart_figs.items())
     columns = 1 if charts_per_page == 1 else 2
     rows = 1 if charts_per_page <= 2 else 2
-    cell_w, cell_h = width/columns, (height-12)/rows
+    cell_w = width / columns
+    cell_h = (height - 12) / rows
+
     for start in range(0, len(entries), charts_per_page):
-        chunk = entries[start:start+charts_per_page]
+        chunk = entries[start:start + charts_per_page]
         cells = []
         for name, fig in chunk:
-            image_bytes, source_width, source_height = _figure_image(fig)
-            proportional_height = (cell_w-14)*source_height/source_width
-            image = Image(io.BytesIO(image_bytes), width=cell_w-14, height=proportional_height)
-            image._restrictSize(cell_w-14, cell_h-35)
-            cells.append(KeepTogether([Paragraph(escape(name), styles["Normal"]), image]))
-        cells += [""] * ((rows*columns)-len(cells))
-        grid = [cells[i:i+columns] for i in range(0, len(cells), columns)]
-        table = Table(grid, colWidths=[cell_w]*columns)
-        table.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP")]))
+            # 22pt reservados para o título acima da imagem
+            img = _fit_image(fig, cell_w - 14, cell_h - 32)
+            cells.append([
+                Paragraph(escape(name), styles["Normal"]),
+                img,
+            ])
+        while len(cells) < rows * columns:
+            cells.append("")
+
+        grid = [
+            cells[i:i + columns]
+            for i in range(0, len(cells), columns)
+        ]
+        table = Table(grid, colWidths=[cell_w] * columns)
+        table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
         story.append(table)
-        if start+charts_per_page < len(entries):
+        if start + charts_per_page < len(entries):
             story.append(PageBreak())
+
     doc.build(story)
     return buffer.getvalue()
