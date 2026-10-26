@@ -14,9 +14,15 @@ from reportlab.platypus import (
     PageBreak,
 )
 
+from kpis import (
+    TEXT_KPIS,
+    PERCENT_KPIS,
+    KPI_GOOD_WHEN_UP,
+    KPI_BAD_WHEN_UP,
+)
+
 
 def _figure_bytes(fig, target_width=1100):
-    """Gera PNG dimensionado; retorna (bytes, altura/largura)."""
     height_px = int(fig.layout.height or 650)
     if height_px <= 0:
         height_px = 650
@@ -24,16 +30,10 @@ def _figure_bytes(fig, target_width=1100):
     buf = fig.to_image(
         format="png", width=width_px, height=height_px, scale=1,
     )
-    return buf, height_px / width_px  # aspect = h/w
+    return buf, height_px / width_px
 
 
 def _fit_image(fig, max_w, max_h):
-    """
-    Gera um Image do reportlab que cabe em max_w × max_h.
-    Cálculo explícito de proporção — sem _restrictSize (API privada
-    do reportlab), sem KeepTogether (que força página única e quebra
-    quando a imagem encosta no limite).
-    """
     max_w = float(max_w)
     max_h = float(max_h)
     if max_w <= 0 or max_h <= 0:
@@ -50,12 +50,56 @@ def _fit_image(fig, max_w, max_h):
     return Image(io.BytesIO(buf), width=w, height=h)
 
 
+def _format_delta_html(name, delta):
+    """
+    HTML inline com a variação colorida. Retorna "" quando não há
+    delta (KPI textual, ou sem base). Nunca devolve 'sem base' — no
+    PDF isso é ruído; melhor não desenhar nada.
+    """
+    if name in TEXT_KPIS or delta is None:
+        return ""
+
+    arrow = "▲" if delta > 0 else "▼" if delta < 0 else "≡"
+    if name in PERCENT_KPIS:
+        d_fmt = f"{abs(delta):.1f} p.p.".replace(".", ",")
+    else:
+        d_fmt = f"{abs(delta):.1f}%".replace(".", ",")
+
+    if delta == 0:
+        color = "#64748B"
+    elif (delta > 0 and name in KPI_GOOD_WHEN_UP) or (
+        delta < 0 and name in KPI_BAD_WHEN_UP
+    ):
+        color = "#16A34A"
+    else:
+        color = "#DC2626"
+
+    return f"<font size='9' color='{color}'>{arrow} {d_fmt}</font>"
+
+
+def _kpi_card_html(name, value, delta_html):
+    label = escape(name)
+    val = escape(str(value))
+    body = (
+        f"<font size='8' color='#64748B'><b>{label.upper()}</b></font>"
+        f"<br/><font size='14'><b>{val}</b></font>"
+    )
+    if delta_html:
+        body += f"<br/>{delta_html}"
+    return body
+
+
 def generate_pdf_report(
-    kpi_dict, selected_kpis, chart_figs=None, charts_per_page=1,
+    kpi_dict,
+    selected_kpis,
+    chart_figs=None,
+    charts_per_page=1,
+    deltas=None,
 ):
     if not 1 <= charts_per_page <= 4:
         raise ValueError("Escolha de 1 a 4 gráficos por página.")
     chart_figs = chart_figs or {}
+    deltas = deltas or {}
     if not selected_kpis and not chart_figs:
         raise ValueError("Selecione ao menos um indicador ou gráfico.")
 
@@ -73,17 +117,16 @@ def generate_pdf_report(
     styles = getSampleStyleSheet()
     story = []
 
-    # ---------- Cartões de KPI ----------
     if selected_kpis:
         cards = []
         for name in selected_kpis:
-            cards.append(Paragraph(
-                escape(name)
-                + "<br/><b>"
-                + escape(str(kpi_dict.get(name, "—")))
-                + "</b>",
-                styles["Normal"],
-            ))
+            delta_html = _format_delta_html(name, deltas.get(name))
+            cards.append(
+                Paragraph(
+                    _kpi_card_html(name, kpi_dict.get(name, "—"), delta_html),
+                    styles["Normal"],
+                )
+            )
         for start in range(0, len(cards), 4):
             row = cards[start:start + 4]
             row += [""] * (4 - len(row))
@@ -102,7 +145,6 @@ def generate_pdf_report(
         if chart_figs:
             story.append(PageBreak())
 
-    # ---------- Gráficos ----------
     entries = list(chart_figs.items())
     columns = 1 if charts_per_page == 1 else 2
     rows = 1 if charts_per_page <= 2 else 2
@@ -113,7 +155,6 @@ def generate_pdf_report(
         chunk = entries[start:start + charts_per_page]
         cells = []
         for name, fig in chunk:
-            # 22pt reservados para o título acima da imagem
             img = _fit_image(fig, cell_w - 14, cell_h - 32)
             cells.append([
                 Paragraph(escape(name), styles["Normal"]),
@@ -122,10 +163,7 @@ def generate_pdf_report(
         while len(cells) < rows * columns:
             cells.append("")
 
-        grid = [
-            cells[i:i + columns]
-            for i in range(0, len(cells), columns)
-        ]
+        grid = [cells[i:i + columns] for i in range(0, len(cells), columns)]
         table = Table(grid, colWidths=[cell_w] * columns)
         table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
         story.append(table)
