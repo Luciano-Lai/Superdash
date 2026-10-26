@@ -372,8 +372,14 @@ def context(page_id, title, subtitle, corrective=False):
         )
         filter_chips.append(f"{col}: {text}")
 
-    loaded = st.session_state.get("_data_loaded_at")
-    refreshed = loaded.strftime("%H:%M") if loaded else "—"
+       loaded = st.session_state.get("_data_loaded_at")
+    load_seconds = st.session_state.get("_last_load_seconds")
+    if loaded:
+        refreshed = loaded.strftime("%H:%M")
+        if load_seconds:
+            refreshed += f" ({load_seconds:.1f}s)"
+    else:
+        refreshed = "—"
     chip_list = [
         f'<span class="chip">{escape(period_label)}</span>',
         f'<span class="chip">{len(data)} tarefas</span>',
