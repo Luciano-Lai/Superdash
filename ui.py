@@ -372,7 +372,7 @@ def context(page_id, title, subtitle, corrective=False):
         )
         filter_chips.append(f"{col}: {text}")
 
-       loaded = st.session_state.get("_data_loaded_at")
+    loaded = st.session_state.get("_data_loaded_at")
     load_seconds = st.session_state.get("_last_load_seconds")
     if loaded:
         refreshed = loaded.strftime("%H:%M")
@@ -470,6 +470,7 @@ def _render_comparison_legend(c, deltas, reasons):
             f"ficar distorcidos. Percentuais (% preventivas e "
             f"% corretivas) não são afetados."
         )
+
 
 def configuration(c, kpi_options, chart_options):
     values, deltas, previous, reasons = calculate_kpis_with_delta(
